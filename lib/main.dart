@@ -1,4 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'tour_models.dart'; // Import the models you just created
 
 void main() {
   runApp(const MyApp());
@@ -7,116 +15,263 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Tour App',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const HomeScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+// The main screen with buttons to record or play a tour
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Tour App'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const RecordingScreen()),
+                );
+              },
+              child: const Text('Record a New Tour'),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const PlayingScreen()),
+                );
+              },
+              child: const Text('Play an Existing Tour'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+// The screen for recording a new tour
+class RecordingScreen extends StatefulWidget {
+  const RecordingScreen({super.key});
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  State<RecordingScreen> createState() => _RecordingScreenState();
+}
+
+class _RecordingScreenState extends State<RecordingScreen> {
+  final List<TourPoint> _tourPoints = [];
+  final TextEditingController _tourNameController = TextEditingController();
+
+  // Function to request necessary permissions
+  Future<void> _requestPermissions() async {
+    await Permission.location.request();
+    await Permission.storage.request(); // Needed for saving files
+    // You might also need microphone permission if you add audio recording
+    // await Permission.microphone.request();
+  }
+
+  // Function to get the current GPS location
+  Future<void> _addWaypoint() async {
+    await _requestPermissions();
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+
+      // For this demo, we'll use a placeholder for the audio path.
+      // In a real app, you would implement audio recording logic here.
+      String audioPath = 'path/to/your/recorded/audio${_tourPoints.length + 1}.mp3';
+
+      setState(() {
+        _tourPoints.add(TourPoint(
+            latitude: position.latitude,
+            longitude: position.longitude,
+            audioPath: audioPath));
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Waypoint added at ${position.latitude}, ${position.longitude}')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to get location: $e')),
+      );
+    }
+  }
+
+  // Function to save the tour to a JSON file
+  Future<void> _saveTour() async {
+    if (_tourNameController.text.isEmpty || _tourPoints.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Please enter a tour name and add at least one waypoint.')),
+      );
+      return;
+    }
+
+    final tour = Tour(name: _tourNameController.text, points: _tourPoints);
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/${_tourNameController.text.replaceAll(' ', '_')}.json');
+    await file.writeAsString(jsonEncode(tour.toJson()));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Tour saved to ${file.path}')),
+    );
+
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Record Tour'),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+          children: [
+            TextField(
+              controller: _tourNameController,
+              decoration: const InputDecoration(labelText: 'Tour Name'),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _addWaypoint,
+              child: const Text('Add Waypoint'),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _tourPoints.length,
+                itemBuilder: (context, index) {
+                  final point = _tourPoints[index];
+                  return ListTile(
+                    title: Text('Waypoint ${index + 1}'),
+                    subtitle: Text('Lat: ${point.latitude.toStringAsFixed(4)}, Lon: ${point.longitude.toStringAsFixed(4)}'),
+                  );
+                },
+              ),
             ),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        onPressed: _saveTour,
+        child: const Icon(Icons.save),
+      ),
+    );
+  }
+}
+
+// The screen for playing a saved tour
+class PlayingScreen extends StatefulWidget {
+  const PlayingScreen({super.key});
+
+  @override
+  State<PlayingScreen> createState() => _PlayingScreenState();
+}
+
+class _PlayingScreenState extends State<PlayingScreen> {
+  Tour? _currentTour;
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final Set<String> _playedAudioPaths = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTourAndStartGps();
+  }
+
+  // Load the tour from the JSON file and start listening to GPS
+  Future<void> _loadTourAndStartGps() async {
+    // For this demo, we'll load a hardcoded tour name.
+    // In a real app, you would show a list of saved tours for the user to pick.
+    const tourName = "My_First_Tour"; // Make sure this matches the name you save
+
+    try {
+        final directory = await getApplicationDocumentsDirectory();
+        final file = File('${directory.path}/$tourName.json');
+        final contents = await file.readAsString();
+        setState(() {
+            _currentTour = Tour.fromJson(jsonDecode(contents));
+        });
+
+        // Start listening to location changes
+        Geolocator.getPositionStream().listen((Position position) {
+            _checkWaypoints(position);
+        });
+    } catch (e) {
+        // Handle error, e.g., file not found
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Could not load tour: $tourName.json. Make sure you've saved a tour with that exact name.")),
+        );
+    }
+  }
+
+
+  // Check the user's current location against the tour's waypoints
+  void _checkWaypoints(Position currentPosition) {
+    if (_currentTour == null) return;
+
+    for (final point in _currentTour!.points) {
+      final distance = Geolocator.distanceBetween(
+        currentPosition.latitude,
+        currentPosition.longitude,
+        point.latitude,
+        point.longitude,
+      );
+
+      // If within 20 meters and not already played, play the audio
+      if (distance < 20 && !_playedAudioPaths.contains(point.audioPath)) {
+        // In a real app, you'd play the actual audio file.
+        // For now, we'll just show a notification.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Playing audio for waypoint at ${point.latitude}, ${point.longitude}')),
+        );
+        _playedAudioPaths.add(point.audioPath);
+
+        // This is where you would use the just_audio package to play the file:
+        // _audioPlayer.setFilePath(point.audioPath);
+        // _audioPlayer.play();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_currentTour?.name ?? 'Playing Tour...'),
+      ),
+      body: Center(
+        child: _currentTour == null
+            ? const CircularProgressIndicator()
+            : const Text('Walking tour in progress...'),
+      ),
     );
   }
 }
