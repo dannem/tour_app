@@ -1,3 +1,4 @@
+import 'browse_tours_screen.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -44,6 +45,17 @@ class HomeScreen extends StatelessWidget {
           children: [
             ElevatedButton(
               onPressed: () {
+                // Add this button to navigate to your new screen
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const BrowseToursScreen()),
+                );
+              },
+              child: const Text('Browse Server Tours'),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const RecordingScreen()),
@@ -59,7 +71,7 @@ class HomeScreen extends StatelessWidget {
                   MaterialPageRoute(builder: (context) => const PlayingScreen()),
                 );
               },
-              child: const Text('Play an Existing Tour'),
+              child: const Text('Play a Local Tour'),
             ),
           ],
         ),
