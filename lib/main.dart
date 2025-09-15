@@ -3,14 +3,16 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
-import 'tour_point.dart';
-import 'package:record/record.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'tour_point.dart';
 
 void main() {
   runApp(const MyApp());
 }
+
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -93,26 +95,34 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   final List<TourPoint> _tourPoints = [];
 
-  // Audio recording state
-  final AudioRecorder _audioRecorder = AudioRecorder();
+  // Audio recording state using flutter_sound
+  FlutterSoundRecorder? _audioRecorder;
   bool _isRecording = false;
-  int? _recordingIndex; // To track which waypoint is being recorded
+  int? _recordingIndex;
+  String? _recorderPath;
 
   @override
   void initState() {
     super.initState();
-    _requestLocationPermission();
+    _audioRecorder = FlutterSoundRecorder();
+    _initRecorder();
+    _requestPermissions();
   }
 
   @override
   void dispose() {
-    _audioRecorder.dispose(); // Clean up the recorder
+    _audioRecorder!.closeRecorder();
+    _audioRecorder = null;
     super.dispose();
   }
 
-  Future<void> _requestLocationPermission() async {
+  Future<void> _initRecorder() async {
+    await _audioRecorder!.openRecorder();
+  }
+
+  Future<void> _requestPermissions() async {
     await Permission.location.request();
-    await Permission.microphone.request(); // Also request microphone permission
+    await Permission.microphone.request();
 
     var locationStatus = await Permission.location.status;
 
@@ -123,7 +133,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
       _getCurrentLocation();
     } else {
       setState(() {
-        _locationMessage = "Location permission is required to record a tour.";
+        _locationMessage = "Location & Mic permissions are required.";
         _isPermissionGranted = false;
       });
     }
@@ -161,24 +171,28 @@ class _RecordingScreenState extends State<RecordingScreen> {
   Future<void> _toggleRecording(int index) async {
     if (_isRecording) {
       // Stop recording
-      final path = await _audioRecorder.stop();
+      await _audioRecorder!.stopRecorder();
       setState(() {
-        _tourPoints[index].audioPath = path;
+        _tourPoints[index].audioPath = _recorderPath;
         _isRecording = false;
         _recordingIndex = null;
+        _recorderPath = null;
       });
     } else {
       // Start recording
       final Directory appDocumentsDir = await getApplicationDocumentsDirectory();
-      final String filePath = '${appDocumentsDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      _recorderPath =
+          '${appDocumentsDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.aac';
 
-      if (await _audioRecorder.hasPermission()) {
-        await _audioRecorder.start(const RecordConfig(), path: filePath);
-        setState(() {
-          _isRecording = true;
-          _recordingIndex = index;
-        });
-      }
+      await _audioRecorder!.startRecorder(
+        toFile: _recorderPath,
+        codec: Codec.aacADTS,
+      );
+
+      setState(() {
+        _isRecording = true;
+        _recordingIndex = index;
+      });
     }
   }
 
@@ -204,28 +218,40 @@ class _RecordingScreenState extends State<RecordingScreen> {
               ElevatedButton.icon(
                 icon: const Icon(Icons.add_location_alt),
                 label: const Text('Add Waypoint'),
-                onPressed: _isRecording ? null : _addWaypoint, // Disable while recording
+                onPressed: _isRecording ? null : _addWaypoint,
               ),
             const SizedBox(height: 20),
-            const Text("Waypoints:", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text("Waypoints:",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             Expanded(
               child: ListView.builder(
                 itemCount: _tourPoints.length,
                 itemBuilder: (context, index) {
                   final point = _tourPoints[index];
-                  final bool isCurrentlyRecording = _isRecording && _recordingIndex == index;
+                  final bool isCurrentlyRecording =
+                      _isRecording && _recordingIndex == index;
 
                   return Card(
                     child: ListTile(
-                      leading: Text("${index + 1}", style: const TextStyle(fontSize: 16)),
-                      title: Text("Lat: ${point.latitude.toStringAsFixed(4)}"),
-                      subtitle: Text("Lon: ${point.longitude.toStringAsFixed(4)}"),
+                      leading: Text("${index + 1}",
+                          style: const TextStyle(fontSize: 16)),
+                      title:
+                          Text("Lat: ${point.latitude.toStringAsFixed(4)}"),
+                      subtitle:
+                          Text("Lon: ${point.longitude.toStringAsFixed(4)}"),
                       trailing: point.audioPath != null
-                          ? const Icon(Icons.check_circle, color: Colors.green)
+                          ? const Icon(Icons.check_circle,
+                              color: Colors.green)
                           : IconButton(
-                              icon: Icon(isCurrentlyRecording ? Icons.stop : Icons.mic),
-                              color: isCurrentlyRecording ? Colors.red : Colors.black,
-                              onPressed: _isRecording && !isCurrentlyRecording ? null : () => _toggleRecording(index),
+                              icon: Icon(isCurrentlyRecording
+                                  ? Icons.stop
+                                  : Icons.mic),
+                              color: isCurrentlyRecording
+                                  ? Colors.red
+                                  : Colors.black,
+                              onPressed: _isRecording && !isCurrentlyRecording
+                                  ? null
+                                  : () => _toggleRecording(index),
                             ),
                     ),
                   );
@@ -238,6 +264,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
     );
   }
 }
+
 
 class PlayingScreen extends StatefulWidget {
   const PlayingScreen({super.key});
