@@ -7,6 +7,8 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'tour_point.dart';
+import 'dart:convert'; // For jsonEncode
+import 'tour.dart';    // Our new Tour class
 
 void main() {
   runApp(const MyApp());
@@ -95,7 +97,6 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   final List<TourPoint> _tourPoints = [];
 
-  // Audio recording state using flutter_sound
   FlutterSoundRecorder? _audioRecorder;
   bool _isRecording = false;
   int? _recordingIndex;
@@ -170,7 +171,6 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   Future<void> _toggleRecording(int index) async {
     if (_isRecording) {
-      // Stop recording
       await _audioRecorder!.stopRecorder();
       setState(() {
         _tourPoints[index].audioPath = _recorderPath;
@@ -179,7 +179,6 @@ class _RecordingScreenState extends State<RecordingScreen> {
         _recorderPath = null;
       });
     } else {
-      // Start recording
       final Directory appDocumentsDir = await getApplicationDocumentsDirectory();
       _recorderPath =
           '${appDocumentsDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.aac';
@@ -196,6 +195,55 @@ class _RecordingScreenState extends State<RecordingScreen> {
     }
   }
 
+  // NEW METHOD to handle saving the tour
+  Future<void> _saveTour(String tourName) async {
+    if (tourName.isEmpty) return;
+
+    final tour = Tour(name: tourName, points: _tourPoints);
+    final tourJson = jsonEncode(tour.toJson());
+
+    final Directory appDocumentsDir = await getApplicationDocumentsDirectory();
+    final String filePath = '${appDocumentsDir.path}/tour_$tourName.json';
+    final File file = File(filePath);
+    await file.writeAsString(tourJson);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Tour "$tourName" saved to $filePath')),
+    );
+
+    Navigator.of(context).pop(); // Go back to the home screen
+  }
+
+  // NEW METHOD to show the save dialog
+  void _showSaveDialog() {
+    final TextEditingController nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Save Tour'),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(hintText: "Enter tour name"),
+          ),
+          actions: [
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: const Text('Save'),
+              onPressed: () {
+                _saveTour(nameController.text);
+                Navigator.of(context).pop(); // Close the dialog
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -203,6 +251,12 @@ class _RecordingScreenState extends State<RecordingScreen> {
         title: const Text('Record Tour'),
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
+        actions: [ // NEW Save button in the AppBar
+          IconButton(
+            icon: const Icon(Icons.save),
+            onPressed: _tourPoints.isNotEmpty ? _showSaveDialog : null,
+          )
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
