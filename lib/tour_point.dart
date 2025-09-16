@@ -15,4 +15,11 @@ class TourPoint {
       'audioPath': audioPath,
     };
   }
+  factory TourPoint.fromJson(Map<String, dynamic> json) {
+    return TourPoint(
+      latitude: json['latitude'],
+      longitude: json['longitude'],
+      audioPath: json['audioPath'],
+    );
+  }
 }
