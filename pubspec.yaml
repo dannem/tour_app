@@ -30,6 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  geocoding: ^2.0.4
   geolocator: ^11.0.0
   just_audio: ^0.9.36
   path_provider: ^2.1.2
