@@ -102,7 +102,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
   bool _isSaving = false; // To show a loading indicator while saving
 
   // Server URL for the emulator
-  final String _baseUrl = "http://10.0.2.2:8000";
+  final String _baseUrl = "http://100.121.117.120";
 
   @override
   void initState() {
