@@ -12,6 +12,9 @@ import 'dart:async';
 import 'tour.dart';
 import 'tour_point.dart';
 
+// The base URL is now defined once here for the entire app.
+const String baseUrl = "https://tour-app-server.onrender.com";
+
 void main() {
   runApp(const MyApp());
 }
@@ -83,7 +86,6 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-// RECORDING SCREEN (No changes from last time)
 class RecordingScreen extends StatefulWidget {
   const RecordingScreen({super.key});
   @override
@@ -99,10 +101,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
   bool _isRecording = false;
   int? _recordingIndex;
   String? _recorderPath;
-  bool _isSaving = false; // To show a loading indicator while saving
-
-  // Server URL for the emulator
-  final String _baseUrl = "https://tour-app-server.onrender.com";
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -183,18 +182,16 @@ class _RecordingScreenState extends State<RecordingScreen> {
     }
   }
 
-  // REWRITTEN _saveTour method to upload to the server
   Future<void> _saveTour(String tourName) async {
     if (tourName.isEmpty) return;
 
     setState(() {
-      _isSaving = true; // Show loading indicator
+      _isSaving = true;
     });
 
     try {
-      // Step 1: Create the tour and get its ID
       final tourCreateResponse = await http.post(
-        Uri.parse('$_baseUrl/tours'),
+        Uri.parse('$baseUrl/tours'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'name': tourName, 'description': 'A new tour created from the app.'}),
       );
@@ -206,20 +203,16 @@ class _RecordingScreenState extends State<RecordingScreen> {
       final newTour = jsonDecode(tourCreateResponse.body);
       final int tourId = newTour['id'];
 
-      // Step 2: Loop through waypoints and upload them
       for (var point in _tourPoints) {
-        if (point.audioPath == null) continue; // Skip waypoints without audio
+        if (point.audioPath == null) continue;
 
         var request = http.MultipartRequest(
           'POST',
-          Uri.parse('$_baseUrl/tours/$tourId/waypoints'),
+          Uri.parse('$baseUrl/tours/$tourId/waypoints'),
         );
 
-        // Add fields
         request.fields['latitude'] = point.latitude.toString();
         request.fields['longitude'] = point.longitude.toString();
-
-        // Add file
         request.files.add(await http.MultipartFile.fromPath('audio_file', point.audioPath!));
 
         final response = await request.send();
@@ -231,7 +224,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Tour "$tourName" successfully uploaded!')),
       );
-      Navigator.of(context).pop(); // Go back to the home screen
+      Navigator.of(context).pop();
 
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -239,7 +232,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
       );
     } finally {
       setState(() {
-        _isSaving = false; // Hide loading indicator
+        _isSaving = false;
       });
     }
   }
@@ -254,7 +247,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
             TextButton(child: const Text('Cancel'), onPressed: () => Navigator.of(context).pop()),
             TextButton(child: const Text('Save'), onPressed: () {
                 _saveTour(nameController.text);
-                Navigator.of(context).pop(); // Close the dialog
+                Navigator.of(context).pop();
               },
             ),
           ],
@@ -277,7 +270,6 @@ class _RecordingScreenState extends State<RecordingScreen> {
           )
         ],
       ),
-      // Show a loading circle while saving
       body: _isSaving
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -323,7 +315,6 @@ class _RecordingScreenState extends State<RecordingScreen> {
   }
 }
 
-// TOUR LIST SCREEN
 class TourListScreen extends StatefulWidget {
   const TourListScreen({super.key});
 
@@ -337,8 +328,6 @@ class _TourListScreenState extends State<TourListScreen> {
   String? _errorMessage;
   bool _isDownloading = false;
 
-  final String _baseUrl = "http://10.0.2.2:8000";
-
   @override
   void initState() {
     super.initState();
@@ -347,7 +336,7 @@ class _TourListScreenState extends State<TourListScreen> {
 
   Future<void> _loadToursFromServer() async {
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/tours'));
+      final response = await http.get(Uri.parse('$baseUrl/tours'));
 
       if (response.statusCode == 200) {
         final List<dynamic> tourJsonList = jsonDecode(response.body);
@@ -381,17 +370,14 @@ class _TourListScreenState extends State<TourListScreen> {
 
       for (var waypoint in tour.waypoints) {
         if (waypoint.audio_filename != null) {
-          final url = '$_baseUrl/uploads/${waypoint.audio_filename}';
+          final url = '$baseUrl/uploads/${waypoint.audio_filename}';
           final response = await http.get(Uri.parse(url));
 
           if (response.statusCode == 200) {
-
-            // --- START: New Validation Code ---
             if (response.bodyBytes.isEmpty) {
               print('Error: Downloaded file for ${waypoint.audio_filename} is empty.');
-              continue; // Skip this waypoint
+              continue;
             }
-            // --- END: New Validation Code ---
 
             final file = File('${tempDir.path}/${waypoint.audio_filename}');
             await file.writeAsBytes(response.bodyBytes);
@@ -484,7 +470,6 @@ class _TourListScreenState extends State<TourListScreen> {
   }
 }
 
-// PLAYING SCREEN
 class PlayingScreen extends StatefulWidget {
   final Tour tour;
   const PlayingScreen({super.key, required this.tour});
@@ -531,7 +516,6 @@ class _PlayingScreenState extends State<PlayingScreen> {
   }
 
   void _checkForWaypoint(Position currentPosition) {
-    // CORRECTED: Use .waypoints instead of .points
     if (_nextWaypointIndex >= widget.tour.waypoints.length) {
       setState(() {
         _statusMessage = "Tour complete!";
@@ -540,7 +524,6 @@ class _PlayingScreenState extends State<PlayingScreen> {
       return;
     }
 
-    // CORRECTED: Use .waypoints instead of .points
     final nextPoint = widget.tour.waypoints[_nextWaypointIndex];
 
     final double distance = Geolocator.distanceBetween(
@@ -559,13 +542,11 @@ class _PlayingScreenState extends State<PlayingScreen> {
     }
   }
 
-    Future<void> _playAudioForWaypoint(int index) async {
+  Future<void> _playAudioForWaypoint(int index) async {
     final point = widget.tour.waypoints[index];
 
-    // We keep this check as a safeguard.
     if (point.audioPath == null || !(await File(point.audioPath!).exists())) {
       print("Audio file not found for waypoint $index. Skipping.");
-      // Auto-skip to the next waypoint if audio is missing
       setState(() {
         _playedIndices.add(index);
         _nextWaypointIndex++;
@@ -576,14 +557,14 @@ class _PlayingScreenState extends State<PlayingScreen> {
     try {
       setState(() {
         _statusMessage = "Playing audio for waypoint ${index + 1}...";
-        _playedIndices.add(index); // Mark as played
+        _playedIndices.add(index);
       });
 
       await _audioPlayer!.startPlayer(
         fromURI: point.audioPath,
         whenFinished: () {
           setState(() {
-            _nextWaypointIndex++; // Move to the next waypoint
+            _nextWaypointIndex++;
             if (_nextWaypointIndex < widget.tour.waypoints.length) {
               _statusMessage = "Walk towards waypoint ${_nextWaypointIndex + 1}.";
             } else {
@@ -595,7 +576,6 @@ class _PlayingScreenState extends State<PlayingScreen> {
       );
     } catch (e) {
       print("Error during startPlayer: $e");
-      // Handle playback error, maybe skip to next point
       setState(() {
         _nextWaypointIndex++;
       });
@@ -628,7 +608,6 @@ class _PlayingScreenState extends State<PlayingScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 30),
-            // CORRECTED: Use .waypoints instead of .points
             if (_distanceToNextPoint >= 0 && _nextWaypointIndex < widget.tour.waypoints.length)
               Text(
                 "Distance to next waypoint: ${_distanceToNextPoint.toStringAsFixed(0)} meters",
