@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'tour.dart';
 import 'tour_point.dart';
 import 'dart:async'; // For StreamSubscription
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const MyApp());
@@ -277,30 +278,42 @@ class TourListScreen extends StatefulWidget {
 class _TourListScreenState extends State<TourListScreen> {
   List<Tour> _tours = [];
   bool _isLoading = true;
+  String? _errorMessage;
+
+  // The base URL of your locally running server
+  // Use 10.0.2.2 for the Android Emulator
+  final String _baseUrl = "http://10.0.2.2:8000";
 
   @override
   void initState() {
     super.initState();
-    _loadTours();
+    _loadToursFromServer();
   }
 
-  Future<void> _loadTours() async {
-    final Directory appDocumentsDir = await getApplicationDocumentsDirectory();
-    final List<FileSystemEntity> files = appDocumentsDir.listSync();
+  Future<void> _loadToursFromServer() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/tours'));
 
-    final List<Tour> loadedTours = [];
-    for (var file in files) {
-      if (file.path.endsWith('.json') && file.path.contains('tour_')) {
-        final String content = await File(file.path).readAsString();
-        final Map<String, dynamic> jsonMap = jsonDecode(content);
-        loadedTours.add(Tour.fromJson(jsonMap));
+      if (response.statusCode == 200) {
+        final List<dynamic> tourJsonList = jsonDecode(response.body);
+        final List<Tour> loadedTours = tourJsonList.map((json) => Tour.fromJson(json)).toList();
+
+        setState(() {
+          _tours = loadedTours;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _errorMessage = "Failed to load tours. Status code: ${response.statusCode}";
+          _isLoading = false;
+        });
       }
+    } catch (e) {
+      setState(() {
+        _errorMessage = "Failed to connect to the server. Make sure it's running.\nError: $e";
+        _isLoading = false;
+      });
     }
-
-    setState(() {
-      _tours = loadedTours;
-      _isLoading = false;
-    });
   }
 
   @override
@@ -311,31 +324,44 @@ class _TourListScreenState extends State<TourListScreen> {
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _tours.isEmpty
-              ? const Center(child: Text('No saved tours found.'))
-              : ListView.builder(
-                  itemCount: _tours.length,
-                  itemBuilder: (context, index) {
-                    final tour = _tours[index];
-                    return Card(
-                      child: ListTile(
-                        title: Text(tour.name),
-                        subtitle: Text('${tour.points.length} waypoints'),
-                        trailing: const Icon(Icons.arrow_forward_ios),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => PlayingScreen(tour: tour),
-                            ),
-                          );
-                        },
-                      ),
-                    );
-                  },
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_errorMessage != null) {
+      return Center(child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Text(_errorMessage!, textAlign: TextAlign.center),
+      ));
+    }
+    if (_tours.isEmpty) {
+      return const Center(child: Text('No tours found on the server.'));
+    }
+
+    return ListView.builder(
+      itemCount: _tours.length,
+      itemBuilder: (context, index) {
+        final tour = _tours[index];
+        return Card(
+          child: ListTile(
+            title: Text(tour.name),
+            subtitle: Text('${tour.points.length} waypoints'),
+            trailing: const Icon(Icons.arrow_forward_ios),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PlayingScreen(tour: tour),
                 ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
