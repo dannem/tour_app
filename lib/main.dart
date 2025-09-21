@@ -1,592 +1,157 @@
-// lib/main.dart (Full Replacement)
-
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
-import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'dart:async';
-import 'tour.dart';
-import 'tour_point.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter_sound/flutter_sound.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-// The base URL is now defined once here for the entire app.
+// Ensure the server URL is correct.
+// If you've deployed your server on Render, replace this with your public URL.
 const String baseUrl = "https://tour-app-server.onrender.com";
 
 void main() {
-  runApp(const MyApp());
+  runApp(const TourApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class TourApp extends StatelessWidget {
+  const TourApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Tour App',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
-        useMaterial3: true,
+        primarySwatch: Colors.blue,
       ),
-      home: const HomeScreen(),
+      home: const TourCreationScreen(),
     );
   }
 }
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+class TourCreationScreen extends StatefulWidget {
+  const TourCreationScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Tour App'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            ElevatedButton.icon(
-              icon: const Icon(Icons.mic),
-              label: const Text('Record a New Tour'),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const RecordingScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                textStyle: const TextStyle(fontSize: 18),
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Play an Existing Tour'),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const TourListScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                textStyle: const TextStyle(fontSize: 18),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  _TourCreationScreenState createState() => _TourCreationScreenState();
 }
 
-class RecordingScreen extends StatefulWidget {
-  const RecordingScreen({super.key});
-  @override
-  State<RecordingScreen> createState() => _RecordingScreenState();
-}
+class _TourCreationScreenState extends State<TourCreationScreen> {
+  final TextEditingController _tourNameController = TextEditingController();
+  final TextEditingController _tourDescriptionController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
+  final TextEditingController _audioPathController = TextEditingController();
 
-class _RecordingScreenState extends State<RecordingScreen> {
-  String _locationMessage = "Getting location...";
-  bool _isPermissionGranted = false;
-  Position? _currentPosition;
-  final List<TourPoint> _tourPoints = [];
-  FlutterSoundRecorder? _audioRecorder;
+  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  String? _recordingPath;
   bool _isRecording = false;
-  int? _recordingIndex;
-  String? _recorderPath;
-  bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
-    _audioRecorder = FlutterSoundRecorder();
-    _initRecorder();
-    _requestPermissions();
+    _openRecorder();
   }
 
-  @override
-  void dispose() {
-    _audioRecorder!.closeRecorder();
-    _audioRecorder = null;
-    super.dispose();
-  }
-
-  Future<void> _initRecorder() async {
-    await _audioRecorder!.openRecorder();
-  }
-
-  Future<void> _requestPermissions() async {
-    await Permission.location.request();
-    await Permission.microphone.request();
-    var locationStatus = await Permission.location.status;
-    if (locationStatus.isGranted) {
-      setState(() { _isPermissionGranted = true; });
-      _getCurrentLocation();
-    } else {
-      setState(() {
-        _locationMessage = "Location & Mic permissions are required.";
-        _isPermissionGranted = false;
-      });
+  Future<void> _openRecorder() async {
+    final status = await Permission.microphone.request();
+    if (status != PermissionStatus.granted) {
+      throw RecordingPermissionException('Microphone permission not granted');
     }
+    await _recorder.openRecorder();
   }
 
-  Future<void> _getCurrentLocation() async {
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
     try {
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final String path = await _recorder.startRecorder(
+        toFile: 'waypoint_audio.aac',
+        codec: Codec.aacADTS,
+      ) as String;
       setState(() {
-        _currentPosition = position;
-        _locationMessage = "Latitude: ${position.latitude.toStringAsFixed(6)}\nLongitude: ${position.longitude.toStringAsFixed(6)}";
-      });
-    } catch (e) {
-      setState(() { _locationMessage = "Could not get location: $e"; });
-    }
-  }
-
-  void _addWaypoint() {
-    _getCurrentLocation().then((_) {
-      if (_currentPosition != null) {
-        setState(() {
-          _tourPoints.add(TourPoint(
-            latitude: _currentPosition!.latitude,
-            longitude: _currentPosition!.longitude,
-          ));
-        });
-      }
-    });
-  }
-
-  Future<void> _toggleRecording(int index) async {
-    if (_isRecording) {
-      await _audioRecorder!.stopRecorder();
-      setState(() {
-        _tourPoints[index].audioPath = _recorderPath;
-        _isRecording = false;
-        _recordingIndex = null;
-        _recorderPath = null;
-      });
-    } else {
-      final Directory appDocumentsDir = await getApplicationDocumentsDirectory();
-      _recorderPath = '${appDocumentsDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.aac';
-      await _audioRecorder!.startRecorder(toFile: _recorderPath, codec: Codec.aacADTS);
-      setState(() {
+        _recordingPath = path;
         _isRecording = true;
-        _recordingIndex = index;
       });
-    }
-  }
-
-  Future<void> _saveTour(String tourName) async {
-    if (tourName.isEmpty) return;
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      final tourCreateResponse = await http.post(
-        Uri.parse('$baseUrl/tours'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': tourName, 'description': 'A new tour created from the app.'}),
-      );
-
-      if (tourCreateResponse.statusCode != 201) {
-        throw Exception('Failed to create tour. Status: ${tourCreateResponse.statusCode}');
-      }
-
-      final newTour = jsonDecode(tourCreateResponse.body);
-      final int tourId = newTour['id'];
-
-      for (var point in _tourPoints) {
-        if (point.audioPath == null) continue;
-
-        var request = http.MultipartRequest(
-          'POST',
-          Uri.parse('$baseUrl/tours/$tourId/waypoints'),
-        );
-
-        request.fields['latitude'] = point.latitude.toString();
-        request.fields['longitude'] = point.longitude.toString();
-        request.files.add(await http.MultipartFile.fromPath('audio_file', point.audioPath!));
-
-        final response = await request.send();
-        if (response.statusCode != 200) {
-          throw Exception('Failed to upload waypoint. Status: ${response.statusCode}');
-        }
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Tour "$tourName" successfully uploaded!')),
-      );
-      Navigator.of(context).pop();
-
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An error occurred: $e')),
-      );
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
+      print('Error starting recording: $e');
     }
   }
 
-  void _showSaveDialog() {
-    final TextEditingController nameController = TextEditingController();
-    showDialog(context: context, builder: (context) {
-        return AlertDialog(
-          title: const Text('Save Tour'),
-          content: TextField(controller: nameController, decoration: const InputDecoration(hintText: "Enter tour name")),
-          actions: [
-            TextButton(child: const Text('Cancel'), onPressed: () => Navigator.of(context).pop()),
-            TextButton(child: const Text('Save'), onPressed: () {
-                _saveTour(nameController.text);
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
+  Future<void> _stopRecording() async {
+    if (!_isRecording) return;
+    await _recorder.stopRecorder();
+    setState(() {
+      _isRecording = false;
+    });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Record Tour'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.save),
-            onPressed: _tourPoints.isNotEmpty && !_isSaving ? _showSaveDialog : null,
-          )
-        ],
-      ),
-      body: _isSaving
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(children: [
-            Text(_locationMessage, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
-            const SizedBox(height: 20),
-            if (_isPermissionGranted)
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add_location_alt),
-                label: const Text('Add Waypoint'),
-                onPressed: _isRecording ? null : _addWaypoint,
-              ),
-            const SizedBox(height: 20),
-            const Text("Waypoints:", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _tourPoints.length,
-                itemBuilder: (context, index) {
-                  final point = _tourPoints[index];
-                  final bool isCurrentlyRecording = _isRecording && _recordingIndex == index;
-                  return Card(
-                    child: ListTile(
-                      leading: Text("${index + 1}", style: const TextStyle(fontSize: 16)),
-                      title: Text("Lat: ${point.latitude.toStringAsFixed(4)}"),
-                      subtitle: Text("Lon: ${point.longitude.toStringAsFixed(4)}"),
-                      trailing: point.audioPath != null
-                          ? const Icon(Icons.check_circle, color: Colors.green)
-                          : IconButton(
-                              icon: Icon(isCurrentlyRecording ? Icons.stop : Icons.mic),
-                              color: isCurrentlyRecording ? Colors.red : Colors.black,
-                              onPressed: _isRecording && !isCurrentlyRecording ? null : () => _toggleRecording(index),
-                            ),
-                    ),
-                  );
-                },
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-}
+  Future<void> _createTour() async {
+    final String name = _tourNameController.text;
+    final String description = _tourDescriptionController.text;
 
-class TourListScreen extends StatefulWidget {
-  const TourListScreen({super.key});
-
-  @override
-  State<TourListScreen> createState() => _TourListScreenState();
-}
-
-class _TourListScreenState extends State<TourListScreen> {
-  List<Tour> _tours = [];
-  bool _isLoading = true;
-  String? _errorMessage;
-  bool _isDownloading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadToursFromServer();
-  }
-
-  Future<void> _loadToursFromServer() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/tours'));
+      final response = await http.post(
+        Uri.parse('$serverUrl/tours/'),
+        headers: <String, String>{
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: jsonEncode({
+          'name': name,
+          'description': description,
+        }),
+      );
 
       if (response.statusCode == 200) {
-        final List<dynamic> tourJsonList = jsonDecode(response.body);
-        final List<Tour> loadedTours = tourJsonList.map((json) => Tour.fromJson(json)).toList();
-
-        setState(() {
-          _tours = loadedTours;
-          _isLoading = false;
-        });
+        final tourData = jsonDecode(response.body);
+        final tourId = tourData['id'];
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Tour "$name" created successfully! ID: $tourId')));
       } else {
-        setState(() {
-          _errorMessage = "Failed to load tours. Status code: ${response.statusCode}";
-          _isLoading = false;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to create tour: ${response.body}')));
       }
     } catch (e) {
-      setState(() {
-        _errorMessage = "Failed to connect to the server. Make sure it's running.\nError: $e";
-        _isLoading = false;
-      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
-  Future<void> _downloadAndStartTour(Tour tour) async {
-    setState(() {
-      _isDownloading = true;
-    });
-
-    try {
-      final tempDir = await getTemporaryDirectory();
-
-      for (var waypoint in tour.waypoints) {
-        if (waypoint.audio_filename != null) {
-          final url = '$baseUrl/uploads/${waypoint.audio_filename}';
-          final response = await http.get(Uri.parse(url));
-
-          if (response.statusCode == 200) {
-            if (response.bodyBytes.isEmpty) {
-              print('Error: Downloaded file for ${waypoint.audio_filename} is empty.');
-              continue;
-            }
-
-            final file = File('${tempDir.path}/${waypoint.audio_filename}');
-            await file.writeAsBytes(response.bodyBytes);
-            waypoint.audioPath = file.path;
-          } else {
-            print('Failed to download audio file: ${waypoint.audio_filename}');
-          }
-        }
-      }
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PlayingScreen(tour: tour),
-        ),
-      );
-
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to download tour audio: $e')),
-      );
-    } finally {
-      setState(() {
-        _isDownloading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Select a Tour'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
-      ),
-      body: Stack(
-        children: [
-          _buildBody(),
-          if (_isDownloading)
-            const Center(
-              child: Card(
-                color: Colors.white,
-                child: Padding(
-                  padding: EdgeInsets.all(20.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 10),
-                      Text("Downloading audio..."),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_errorMessage != null) {
-      return Center(child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Text(_errorMessage!, textAlign: TextAlign.center),
-      ));
-    }
-    if (_tours.isEmpty) {
-      return const Center(child: Text('No tours found on the server.'));
-    }
-
-    return ListView.builder(
-      itemCount: _tours.length,
-      itemBuilder: (context, index) {
-        final tour = _tours[index];
-        return Card(
-          child: ListTile(
-            title: Text(tour.name),
-            subtitle: Text('${tour.waypoints.length} waypoints'),
-            trailing: const Icon(Icons.arrow_forward_ios),
-            onTap: () => _downloadAndStartTour(tour),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class PlayingScreen extends StatefulWidget {
-  final Tour tour;
-  const PlayingScreen({super.key, required this.tour});
-
-  @override
-  State<PlayingScreen> createState() => _PlayingScreenState();
-}
-
-class _PlayingScreenState extends State<PlayingScreen> {
-  FlutterSoundPlayer? _audioPlayer;
-  StreamSubscription<Position>? _locationSubscription;
-
-  final Set<int> _playedIndices = {};
-  int _nextWaypointIndex = 0;
-  String _statusMessage = "Starting tour...";
-  double _distanceToNextPoint = -1;
-
-  @override
-  void initState() {
-    super.initState();
-    _audioPlayer = FlutterSoundPlayer();
-    _initPlayerAndLocation();
-  }
-
-  Future<void> _initPlayerAndLocation() async {
-    await _audioPlayer!.openPlayer();
-    _startLocationListener();
-  }
-
-  void _startLocationListener() {
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 1,
-    );
-
-    _locationSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
-      print("Current Position: ${position.latitude}, ${position.longitude}");
-      _checkForWaypoint(position);
-    });
-
-    setState(() {
-      _statusMessage = "Walk towards the first waypoint.";
-    });
-  }
-
-  void _checkForWaypoint(Position currentPosition) {
-    if (_nextWaypointIndex >= widget.tour.waypoints.length) {
-      setState(() {
-        _statusMessage = "Tour complete!";
-        _locationSubscription?.cancel();
-      });
-      return;
-    }
-
-    final nextPoint = widget.tour.waypoints[_nextWaypointIndex];
-
-    final double distance = Geolocator.distanceBetween(
-      currentPosition.latitude,
-      currentPosition.longitude,
-      nextPoint.latitude,
-      nextPoint.longitude,
-    );
-
-    setState(() {
-      _distanceToNextPoint = distance;
-    });
-
-    if (distance <= 30 && !_playedIndices.contains(_nextWaypointIndex)) {
-      _playAudioForWaypoint(_nextWaypointIndex);
-    }
-  }
-
-  Future<void> _playAudioForWaypoint(int index) async {
-    final point = widget.tour.waypoints[index];
-
-    if (point.audioPath == null || !(await File(point.audioPath!).exists())) {
-      print("Audio file not found for waypoint $index. Skipping.");
-      setState(() {
-        _playedIndices.add(index);
-        _nextWaypointIndex++;
-      });
+  Future<void> _addWaypointFromAddress() async {
+    final String tourId = _tourNameController.text; // Assuming tour name is unique and can be used as ID for simplicity
+    final String address = _addressController.text;
+    final String audioFilePath = _recordingPath ?? '';
+    if (tourId.isEmpty || address.isEmpty || audioFilePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill all fields and record audio.')));
       return;
     }
 
     try {
-      setState(() {
-        _statusMessage = "Playing audio for waypoint ${index + 1}...";
-        _playedIndices.add(index);
-      });
+      final file = File(audioFilePath);
+      final bytes = await file.readAsBytes();
 
-      await _audioPlayer!.startPlayer(
-        fromURI: point.audioPath,
-        whenFinished: () {
-          setState(() {
-            _nextWaypointIndex++;
-            if (_nextWaypointIndex < widget.tour.waypoints.length) {
-              _statusMessage = "Walk towards waypoint ${_nextWaypointIndex + 1}.";
-            } else {
-              _statusMessage = "Tour complete!";
-              _locationSubscription?.cancel();
-            }
-          });
-        },
-      );
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$serverUrl/tours/$tourId/waypoints-from-home'),
+      )
+        ..fields['address'] = address
+        ..files.add(http.MultipartFile.fromBytes(
+          'audio_file',
+          bytes,
+          filename: 'audio.aac',
+        ));
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Waypoint from address added successfully!')));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to add waypoint: ${response.body}')));
+      }
     } catch (e) {
-      print("Error during startPlayer: $e");
-      setState(() {
-        _nextWaypointIndex++;
-      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
   @override
   void dispose() {
-    _locationSubscription?.cancel();
-    _audioPlayer!.closePlayer();
-    _audioPlayer = null;
+    _recorder.closeRecorder();
     super.dispose();
   }
 
@@ -594,25 +159,53 @@ class _PlayingScreenState extends State<PlayingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Playing: ${widget.tour.name}'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
+        title: const Text('Create Tour'),
       ),
-      body: Center(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              _statusMessage,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 30),
-            if (_distanceToNextPoint >= 0 && _nextWaypointIndex < widget.tour.waypoints.length)
-              Text(
-                "Distance to next waypoint: ${_distanceToNextPoint.toStringAsFixed(0)} meters",
-                style: const TextStyle(fontSize: 18),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _tourNameController,
+              decoration: const InputDecoration(
+                labelText: 'Tour Name',
               ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _tourDescriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Tour Description',
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _createTour,
+              child: const Text('Create New Tour'),
+            ),
+            const SizedBox(height: 40),
+            const Text('Add Waypoint from Address', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _addressController,
+              decoration: const InputDecoration(
+                labelText: 'Address',
+              ),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: _isRecording ? _stopRecording : _startRecording,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isRecording ? Colors.red : Colors.green,
+              ),
+              child: Text(_isRecording ? 'Stop Recording' : 'Start Recording'),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: _addWaypointFromAddress,
+              child: const Text('Add Waypoint'),
+            ),
           ],
         ),
       ),

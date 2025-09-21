@@ -5,16 +5,14 @@
 		<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>
 
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>This app needs access to location to record and play tours.</string>
-    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>This app needs access to location to record and play tours.</string>
-
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs access to your microphone to record audio for tour points.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-    <string>This app needs access to location to record and play tours.</string>
-    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>This app needs access to location to record and play tours.</string>
-    <key>NSMicrophoneUsageDescription</key> <string>This app needs access to the microphone to record audio for tour waypoints.</string> <key>CFBundleDisplayName</key>
+	<string>This app needs access to your location to save GPS coordinates for tour points.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs access to your location to play tour points as you approach them.</string>
+
+
 
 	<key>CFBundleDisplayName</key>
 	<string>Tour App</string>
