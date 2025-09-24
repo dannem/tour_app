@@ -152,9 +152,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   // NEW FUNCTION: Add a waypoint from a manually provided address or coordinates
   void _addWaypointFromHome() {
-    final _addressController = TextEditingController();
-    final _latController = TextEditingController();
-    final _lonController = TextEditingController();
+    final addressController = TextEditingController();
+    final latController = TextEditingController();
+    final lonController = TextEditingController();
 
     showDialog(
       context: context,
@@ -166,19 +166,19 @@ class _RecordingScreenState extends State<RecordingScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
-                  controller: _addressController,
+                  controller: addressController,
                   decoration: const InputDecoration(labelText: 'Address'),
                 ),
                 const SizedBox(height: 10),
                 const Text('OR'),
                 const SizedBox(height: 10),
                 TextField(
-                  controller: _latController,
+                  controller: latController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: 'Latitude'),
                 ),
                 TextField(
-                  controller: _lonController,
+                  controller: lonController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: 'Longitude'),
                 ),
@@ -192,9 +192,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
                     if (result != null) {
                       final audioFile = File(result.files.single.path!);
                       _addManualWaypoint(
-                        address: _addressController.text.trim(),
-                        latitude: double.tryParse(_latController.text.trim()),
-                        longitude: double.tryParse(_lonController.text.trim()),
+                        address: addressController.text.trim(),
+                        latitude: double.tryParse(latController.text.trim()),
+                        longitude: double.tryParse(lonController.text.trim()),
                         audioFile: audioFile,
                       );
                       Navigator.of(context).pop();
@@ -207,9 +207,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
                 ElevatedButton.icon(
                   onPressed: () {
                     _addManualWaypoint(
-                      address: _addressController.text.trim(),
-                      latitude: double.tryParse(_latController.text.trim()),
-                      longitude: double.tryParse(_lonController.text.trim()),
+                      address: addressController.text.trim(),
+                      latitude: double.tryParse(latController.text.trim()),
+                      longitude: double.tryParse(lonController.text.trim()),
                     );
                     Navigator.of(context).pop();
                   },
