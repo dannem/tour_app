@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  google_maps_apis: ^1.0.0+1
+  flutter_typeahead: ^4.3.0
   geocoding: ^2.2.1
   geolocator: ^11.0.0
   just_audio: ^0.9.36
