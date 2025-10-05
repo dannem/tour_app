@@ -1,29 +1,116 @@
-// lib/main.dart
-
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
-import 'dart:convert';
+import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:just_audio/just_audio.dart';
+import 'dart:convert';
 import 'dart:async';
-import 'tour.dart';
-import 'tour_point.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:path/path.dart' as path;
 
-const String baseUrl = "https://tour-app-server.onrender.com";
+// --- IMPORTANT ---
+// This is now pointing to your live Render server.
+const String serverBaseUrl = "https://tour-app-server.onrender.com";
+// ---------------
 
 void main() {
-  runApp(const MyApp());
+  runApp(const TourApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+//-------------------------------------------------
+// Data Models (FIXED to match your server's JSON)
+//-------------------------------------------------
+class TourPoint {
+  final int id;
+  // final String title; // REMOVED - Server doesn't provide a title for each point
+  final double latitude;
+  final double longitude;
+  final String audioFilePath;
+
+  TourPoint({
+    required this.id,
+    required this.latitude,
+    required this.longitude,
+    required this.audioFilePath,
+  });
+
+  // UPDATED FACTORY
+  factory TourPoint.fromJson(Map<String, dynamic> json) {
+    return TourPoint(
+      id: json['id'],
+      latitude: json['latitude'],
+      longitude: json['longitude'],
+      // Corrected field name to match server JSON
+      audioFilePath: json['audio_filename'],
+    );
+  }
+}
+
+class Tour {
+  final int id;
+  final String title;
+  final String description;
+  final List<TourPoint> points;
+
+  Tour({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.points,
+  });
+
+  // UPDATED FACTORY
+  factory Tour.fromJson(Map<String, dynamic> json) {
+    // Corrected field name to match server JSON
+    var pointsList = json['waypoints'] as List? ?? [];
+    List<TourPoint> tourPoints = pointsList.map((i) => TourPoint.fromJson(i)).toList();
+    return Tour(
+      id: json['id'],
+      // Corrected field name to match server JSON
+      title: json['name'],
+      description: json['description'],
+      points: tourPoints,
+    );
+  }
+}
+
+
+//-------------------------------------------------
+// API Service (to talk to the server)
+//-------------------------------------------------
+class ApiService {
+  Future<List<Tour>> fetchTours() async {
+    try {
+      final response = await http.get(Uri.parse('$serverBaseUrl/tours/'));
+      if (response.statusCode == 200) {
+        List<dynamic> toursJson = json.decode(response.body);
+        return toursJson.map((json) => Tour.fromJson(json)).toList();
+      } else {
+        throw Exception('Failed to load tours from server (Status code: ${response.statusCode})');
+      }
+    } catch (e) {
+      throw Exception('Could not connect to server or parse tours. Is your Python server running? Error: $e');
+    }
+  }
+
+  Future<Tour> fetchTourDetails(int tourId) async {
+     try {
+      final response = await http.get(Uri.parse('$serverBaseUrl/tours/$tourId'));
+      if (response.statusCode == 200) {
+        return Tour.fromJson(json.decode(response.body));
+      } else {
+        throw Exception('Failed to load tour details (Status code: ${response.statusCode})');
+      }
+    } catch (e) {
+      throw Exception('Could not connect to server or parse tour details. Error: $e');
+    }
+  }
+}
+
+
+//-------------------------------------------------
+// Main App Widget
+//-------------------------------------------------
+class TourApp extends StatelessWidget {
+  const TourApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -33,489 +120,81 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const MyHomePage(title: 'Tour App'),
+      home: const ChoiceScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  final TextEditingController _addressController = TextEditingController();
-  String _coordinates = 'No coordinates';
-  final Completer<GoogleMapController> _controller = Completer();
-  final Set<Marker> _markers = {};
-  static const CameraPosition _initialPosition = CameraPosition(
-    target: LatLng(40.7128, -74.0060),
-    zoom: 14.0,
-  );
-
-  Future<void> _getCoordinates() async {
-    try {
-      final locations = await locationFromAddress(_addressController.text);
-      if (locations.isNotEmpty) {
-        final location = locations.first;
-        setState(() {
-          _coordinates =
-              'Lat: ${location.latitude}, Lng: ${location.longitude}';
-          _markers.clear();
-          _markers.add(
-            Marker(
-              markerId: const MarkerId('selected-location'),
-              position: LatLng(location.latitude, location.longitude),
-            ),
-          );
-        });
-        final controller = await _controller.future;
-        await controller.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: LatLng(location.latitude, location.longitude),
-              zoom: 16.0,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      setState(() {
-        _coordinates = 'Error: Could not get coordinates';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _addressController,
-              decoration: const InputDecoration(
-                labelText: 'Enter Address',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16.0),
-            ElevatedButton(
-              onPressed: _getCoordinates,
-              child: const Text('Accept Address'),
-            ),
-            const SizedBox(height: 16.0),
-            Text(_coordinates),
-            const SizedBox(height: 16.0),
-            Expanded(
-              child: GoogleMap(
-                mapType: MapType.normal,
-                initialCameraPosition: _initialPosition,
-                onMapCreated: (GoogleMapController controller) {
-                  _controller.complete(controller);
-                },
-                markers: _markers,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+//-------------------------------------------------
+// 1. The Home Screen with Three Choices
+//-------------------------------------------------
+class ChoiceScreen extends StatelessWidget {
+  const ChoiceScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tour App'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
       ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            ElevatedButton.icon(
-              icon: const Icon(Icons.mic),
-              label: const Text('Record a New Tour'),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const RecordingScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                textStyle: const TextStyle(fontSize: 18),
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Play an Existing Tour'),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const TourListScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                textStyle: const TextStyle(fontSize: 18),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class RecordingScreen extends StatefulWidget {
-  const RecordingScreen({super.key});
-  @override
-  State<RecordingScreen> createState() => _RecordingScreenState();
-}
-
-class _RecordingScreenState extends State<RecordingScreen> {
-  String _locationMessage = "Getting location...";
-  bool _isPermissionGranted = false;
-  Position? _currentPosition;
-  final List<TourPoint> _tourPoints = [];
-  FlutterSoundRecorder? _audioRecorder;
-  bool _isRecording = false;
-  int? _recordingIndex;
-  String? _recorderPath;
-  bool _isSaving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _audioRecorder = FlutterSoundRecorder();
-    _initRecorder();
-    _requestPermissions();
-  }
-
-  @override
-  void dispose() {
-    _audioRecorder!.closeRecorder();
-    _audioRecorder = null;
-    super.dispose();
-  }
-
-  Future<void> _initRecorder() async {
-    await _audioRecorder!.openRecorder();
-  }
-
-  Future<void> _requestPermissions() async {
-    await Permission.location.request();
-    await Permission.microphone.request();
-    var locationStatus = await Permission.location.status;
-    if (locationStatus.isGranted) {
-      setState(() { _isPermissionGranted = true; });
-      _getCurrentLocation();
-    } else {
-      setState(() {
-        _locationMessage = "Location & Mic permissions are required.";
-        _isPermissionGranted = false;
-      });
-    }
-  }
-
-  Future<void> _getCurrentLocation() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      setState(() {
-        _currentPosition = position;
-        _locationMessage = "Latitude: ${position.latitude.toStringAsFixed(6)}\nLongitude: ${position.longitude.toStringAsFixed(6)}";
-      });
-    } catch (e) {
-      setState(() { _locationMessage = "Could not get location: $e"; });
-    }
-  }
-
-  // NEW FUNCTION: Add a waypoint from a manually provided address or coordinates
-  void _addWaypointFromHome() {
-    final addressController = TextEditingController();
-    final latController = TextEditingController();
-    final lonController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Add Waypoint Manually'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: addressController,
-                  decoration: const InputDecoration(labelText: 'Address'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Play Tour'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  textStyle: const TextStyle(fontSize: 18),
+                  backgroundColor: Colors.blue,
                 ),
-                const SizedBox(height: 10),
-                const Text('OR'),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: latController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Latitude'),
-                ),
-                TextField(
-                  controller: lonController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Longitude'),
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    FilePickerResult? result = await FilePicker.platform.pickFiles(
-                      type: FileType.custom,
-                      allowedExtensions: ['aac', 'mp3', 'm4a'],
-                    );
-                    if (result != null) {
-                      final audioFile = File(result.files.single.path!);
-                      _addManualWaypoint(
-                        address: addressController.text.trim(),
-                        latitude: double.tryParse(latController.text.trim()),
-                        longitude: double.tryParse(lonController.text.trim()),
-                        audioFile: audioFile,
-                      );
-                      Navigator.of(context).pop();
-                    }
-                  },
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Upload Audio File'),
-                ),
-                const SizedBox(height: 10),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    _addManualWaypoint(
-                      address: addressController.text.trim(),
-                      latitude: double.tryParse(latController.text.trim()),
-                      longitude: double.tryParse(lonController.text.trim()),
-                    );
-                    Navigator.of(context).pop();
-                  },
-                  icon: const Icon(Icons.mic),
-                  label: const Text('Record Audio Later'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // NEW FUNCTION: Add the waypoint to the list
-  void _addManualWaypoint({
-    String? address,
-    double? latitude,
-    double? longitude,
-    File? audioFile,
-  }) {
-    setState(() {
-      _tourPoints.add(TourPoint(
-        latitude: latitude ?? 0,
-        longitude: longitude ?? 0,
-        audioPath: audioFile?.path,
-      ));
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Waypoint added to the list. Press save when finished.')),
-    );
-  }
-
-  void _addWaypoint() {
-    _getCurrentLocation().then((_) {
-      if (_currentPosition != null) {
-        setState(() {
-          _tourPoints.add(TourPoint(
-            latitude: _currentPosition!.latitude,
-            longitude: _currentPosition!.longitude,
-          ));
-        });
-      }
-    });
-  }
-
-  Future<void> _toggleRecording(int index) async {
-    if (_isRecording) {
-      await _audioRecorder!.stopRecorder();
-      setState(() {
-        _tourPoints[index].audioPath = _recorderPath;
-        _isRecording = false;
-        _recordingIndex = null;
-        _recorderPath = null;
-      });
-    } else {
-      final Directory appDocumentsDir = await getApplicationDocumentsDirectory();
-      _recorderPath = '${appDocumentsDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.aac';
-      await _audioRecorder!.startRecorder(toFile: _recorderPath, codec: Codec.aacADTS);
-      setState(() {
-        _isRecording = true;
-        _recordingIndex = index;
-      });
-    }
-  }
-
-  Future<void> _saveTour(String tourName) async {
-    if (tourName.isEmpty) return;
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      final tourCreateResponse = await http.post(
-        Uri.parse('$baseUrl/tours'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': tourName, 'description': 'A new tour created from the app.'}),
-      );
-
-      if (tourCreateResponse.statusCode != 201) {
-        throw Exception('Failed to create tour. Status: ${tourCreateResponse.statusCode}');
-      }
-
-      final newTour = jsonDecode(tourCreateResponse.body);
-      final int tourId = newTour['id'];
-
-      for (var point in _tourPoints) {
-        if (point.audioPath == null) continue;
-
-        var request = http.MultipartRequest(
-          'POST',
-          Uri.parse('$baseUrl/tours/$tourId/waypoints'),
-        );
-
-        // Use a new endpoint for manual waypoints
-        final url = Uri.parse('$baseUrl/tours/$tourId/waypoints/from_home');
-        var manualRequest = http.MultipartRequest('POST', url);
-
-        if (point.audioPath != null) {
-          manualRequest.files.add(await http.MultipartFile.fromPath(
-            'audio_file',
-            point.audioPath!,
-            filename: path.basename(point.audioPath!),
-          ));
-        }
-
-        manualRequest.fields['latitude'] = point.latitude.toString();
-        manualRequest.fields['longitude'] = point.longitude.toString();
-
-        final response = await manualRequest.send();
-        if (response.statusCode != 200) {
-          throw Exception('Failed to upload waypoint. Status: ${response.statusCode}');
-        }
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Tour "$tourName" successfully uploaded!')),
-      );
-      Navigator.of(context).pop();
-
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An error occurred: $e')),
-      );
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
-    }
-  }
-
-  void _showSaveDialog() {
-    final TextEditingController nameController = TextEditingController();
-    showDialog(context: context, builder: (context) {
-        return AlertDialog(
-          title: const Text('Save Tour'),
-          content: TextField(controller: nameController, decoration: const InputDecoration(hintText: "Enter tour name")),
-          actions: [
-            TextButton(child: const Text('Cancel'), onPressed: () => Navigator.of(context).pop()),
-            TextButton(child: const Text('Save'), onPressed: () {
-                _saveTour(nameController.text);
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Record Tour'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.save),
-            onPressed: _tourPoints.isNotEmpty && !_isSaving ? _showSaveDialog : null,
-          )
-        ],
-      ),
-      body: _isSaving
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(children: [
-            Text(_locationMessage, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
-            const SizedBox(height: 20),
-            if (_isPermissionGranted)
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add_location_alt),
-                label: const Text('Add Waypoint'),
-                onPressed: _isRecording ? null : _addWaypoint,
-              ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.home),
-              label: const Text('Add Waypoint Manually'),
-              onPressed: _isRecording ? null : _addWaypointFromHome,
-            ),
-            const SizedBox(height: 20),
-            const Text("Waypoints:", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _tourPoints.length,
-                itemBuilder: (context, index) {
-                  final point = _tourPoints[index];
-                  final bool isCurrentlyRecording = _isRecording && _recordingIndex == index;
-                  return Card(
-                    child: ListTile(
-                      leading: Text("${index + 1}", style: const TextStyle(fontSize: 16)),
-                      title: Text("Lat: ${point.latitude.toStringAsFixed(4)}"),
-                      subtitle: Text("Lon: ${point.longitude.toStringAsFixed(4)}"),
-                      trailing: point.audioPath != null
-                          ? const Icon(Icons.check_circle, color: Colors.green)
-                          : IconButton(
-                              icon: Icon(isCurrentlyRecording ? Icons.stop : Icons.mic),
-                              color: isCurrentlyRecording ? Colors.red : Colors.black,
-                              onPressed: _isRecording && !isCurrentlyRecording ? null : () => _toggleRecording(index),
-                            ),
-                    ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const TourListScreen()),
                   );
                 },
               ),
-            )
+            ),
+            const Divider(height: 20, thickness: 1, indent: 20, endIndent: 20),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.map),
+                label: const Text('Manual Recording'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  textStyle: const TextStyle(fontSize: 18),
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const MapScreen()),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.location_on),
+                label: const Text('Record at Location'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  textStyle: const TextStyle(fontSize: 18),
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LocationRecordingScreen()),
+                  );
+                },
+              ),
+            ),
           ],
         ),
       ),
@@ -523,6 +202,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
   }
 }
 
+//-------------------------------------------------
+// 2. Screen to List Tours from Server
+//-------------------------------------------------
 class TourListScreen extends StatefulWidget {
   const TourListScreen({super.key});
 
@@ -531,87 +213,12 @@ class TourListScreen extends StatefulWidget {
 }
 
 class _TourListScreenState extends State<TourListScreen> {
-  List<Tour> _tours = [];
-  bool _isLoading = true;
-  String? _errorMessage;
-  bool _isDownloading = false;
+  late Future<List<Tour>> futureTours;
 
   @override
   void initState() {
     super.initState();
-    _loadToursFromServer();
-  }
-
-  Future<void> _loadToursFromServer() async {
-    try {
-      final response = await http.get(Uri.parse('$baseUrl/tours'));
-
-      if (response.statusCode == 200) {
-        final List<dynamic> tourJsonList = jsonDecode(response.body);
-        final List<Tour> loadedTours = tourJsonList.map((json) => Tour.fromJson(json)).toList();
-
-        setState(() {
-          _tours = loadedTours;
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _errorMessage = "Failed to load tours. Status code: ${response.statusCode}";
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = "Failed to connect to the server. Make sure it's running.\nError: $e";
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _downloadAndStartTour(Tour tour) async {
-    setState(() {
-      _isDownloading = true;
-    });
-
-    try {
-      final tempDir = await getTemporaryDirectory();
-
-      for (var waypoint in tour.waypoints) {
-        if (waypoint.audio_filename != null) {
-          final url = '$baseUrl/uploads/${waypoint.audio_filename}';
-          final response = await http.get(Uri.parse(url));
-
-          if (response.statusCode == 200) {
-            if (response.bodyBytes.isEmpty) {
-              print('Error: Downloaded file for ${waypoint.audio_filename} is empty.');
-              continue;
-            }
-
-            final file = File('${tempDir.path}/${waypoint.audio_filename}');
-            await file.writeAsBytes(response.bodyBytes);
-            waypoint.audioPath = file.path;
-          } else {
-            print('Failed to download audio file: ${waypoint.audio_filename}');
-          }
-        }
-      }
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PlayingScreen(tour: tour),
-        ),
-      );
-
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to download tour audio: $e')),
-      );
-    } finally {
-      setState(() {
-        _isDownloading = false;
-      });
-    }
+    futureTours = ApiService().fetchTours();
   }
 
   @override
@@ -619,189 +226,185 @@ class _TourListScreenState extends State<TourListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Select a Tour'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
       ),
-      body: Stack(
-        children: [
-          _buildBody(),
-          if (_isDownloading)
-            const Center(
-              child: Card(
-                color: Colors.white,
-                child: Padding(
-                  padding: EdgeInsets.all(20.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 10),
-                      Text("Downloading audio..."),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
+      body: FutureBuilder<List<Tour>>(
+        future: futureTours,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          } else if (snapshot.hasError) {
+            return Center(child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
+            ));
+          } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return const Center(child: Text('No tours found on the server.'));
+          } else {
+            List<Tour> tours = snapshot.data!;
+            return ListView.builder(
+              itemCount: tours.length,
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(tours[index].title),
+                  subtitle: Text(tours[index].description),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => TourPlaybackScreen(tourId: tours[index].id),
+                      ),
+                    );
+                  },
+                );
+              },
+            );
+          }
+        },
       ),
-    );
-  }
-
-  Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_errorMessage != null) {
-      return Center(child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Text(_errorMessage!, textAlign: TextAlign.center),
-      ));
-    }
-    if (_tours.isEmpty) {
-      return const Center(child: Text('No tours found on the server.'));
-    }
-
-    return ListView.builder(
-      itemCount: _tours.length,
-      itemBuilder: (context, index) {
-        final tour = _tours[index];
-        return Card(
-          child: ListTile(
-            title: Text(tour.name),
-            subtitle: Text('${tour.waypoints.length} waypoints'),
-            trailing: const Icon(Icons.arrow_forward_ios),
-            onTap: () => _downloadAndStartTour(tour),
-          ),
-        );
-      },
     );
   }
 }
 
-class PlayingScreen extends StatefulWidget {
-  final Tour tour;
-  const PlayingScreen({super.key, required this.tour});
+
+//-------------------------------------------------
+// 3. Screen for Tour Playback
+//-------------------------------------------------
+class TourPlaybackScreen extends StatefulWidget {
+  final int tourId;
+  const TourPlaybackScreen({super.key, required this.tourId});
 
   @override
-  State<PlayingScreen> createState() => _PlayingScreenState();
+  State<TourPlaybackScreen> createState() => _TourPlaybackScreenState();
 }
 
-class _PlayingScreenState extends State<PlayingScreen> {
-  FlutterSoundPlayer? _audioPlayer;
-  StreamSubscription<Position>? _locationSubscription;
+class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
+  final Completer<GoogleMapController> _mapController = Completer();
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  StreamSubscription<Position>? _positionStreamSubscription;
 
-  final Set<int> _playedIndices = {};
-  int _nextWaypointIndex = 0;
-  String _statusMessage = "Starting tour...";
-  double _distanceToNextPoint = -1;
+  Tour? _tour;
+  Set<Marker> _markers = {};
+  int _currentPointIndex = 0;
+  String _statusMessage = 'Loading tour...';
+  bool _hasPlayedCurrent = false;
 
   @override
   void initState() {
     super.initState();
-    _audioPlayer = FlutterSoundPlayer();
-    _initPlayerAndLocation();
+    _loadTourDetails();
   }
 
-  Future<void> _initPlayerAndLocation() async {
-    await _audioPlayer!.openPlayer();
-    _startLocationListener();
-  }
-
-  void _startLocationListener() {
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 1,
-    );
-
-    _locationSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
-      print("Current Position: ${position.latitude}, ${position.longitude}");
-      _checkForWaypoint(position);
-    });
-
-    setState(() {
-      _statusMessage = "Walk towards the first waypoint.";
-    });
-  }
-
-  void _checkForWaypoint(Position currentPosition) {
-    if (widget.tour.waypoints.isEmpty) {
-        setState(() {
-          _statusMessage = "This tour has no waypoints.";
-          _locationSubscription?.cancel();
-        });
-        return;
+  Future<void> _loadTourDetails() async {
+    try {
+      final tour = await ApiService().fetchTourDetails(widget.tourId);
+      setState(() {
+        _tour = tour;
+        _statusMessage = 'Tour loaded. Waiting for location...';
+        _markers = tour.points.map((point) {
+          return Marker(
+            markerId: MarkerId(point.id.toString()),
+            position: LatLng(point.latitude, point.longitude),
+            // UPDATED - Use point ID since there's no title
+            infoWindow: InfoWindow(title: 'Point ${point.id}'),
+          );
+        }).toSet();
+      });
+       if (tour.points.isNotEmpty) {
+        // Move camera to the first point of the tour
+        _goToPoint(tour.points.first);
       }
-    if (_nextWaypointIndex >= widget.tour.waypoints.length) {
+      _startLocationListener();
+    } catch (e) {
       setState(() {
-        _statusMessage = "Tour complete!";
-        _locationSubscription?.cancel();
+        _statusMessage = "Error loading tour: $e";
       });
-      return;
-    }
-
-    final nextPoint = widget.tour.waypoints[_nextWaypointIndex];
-
-    final double distance = Geolocator.distanceBetween(
-      currentPosition.latitude,
-      currentPosition.longitude,
-      nextPoint.latitude,
-      nextPoint.longitude,
-    );
-
-    setState(() {
-      _distanceToNextPoint = distance;
-    });
-
-    if (distance <= 30 && !_playedIndices.contains(_nextWaypointIndex)) {
-      _playAudioForWaypoint(_nextWaypointIndex);
     }
   }
 
-  Future<void> _playAudioForWaypoint(int index) async {
-    final point = widget.tour.waypoints[index];
+  Future<void> _goToPoint(TourPoint point) async {
+    final GoogleMapController controller = await _mapController.future;
+    controller.animateCamera(CameraUpdate.newCameraPosition(
+      CameraPosition(
+        target: LatLng(point.latitude, point.longitude),
+        zoom: 16.0,
+        )
+    ));
+  }
 
-    if (point.audioPath == null || !(await File(point.audioPath!).exists())) {
-      print("Audio file not found for waypoint $index. Skipping.");
+
+  Future<void> _startLocationListener() async {
+    // First, get permissions
+     await _determinePosition();
+    // Then start listening
+    _positionStreamSubscription = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10)
+    ).listen((Position position) {
+      if (_tour == null || _currentPointIndex >= _tour!.points.length) {
+        return; // Tour not loaded or finished
+      }
+
+      final currentTargetPoint = _tour!.points[_currentPointIndex];
+      final distanceInMeters = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        currentTargetPoint.latitude,
+        currentTargetPoint.longitude,
+      );
+
       setState(() {
-        _playedIndices.add(index);
-        _nextWaypointIndex++;
+          // UPDATED status message
+          _statusMessage = "You are ${distanceInMeters.toStringAsFixed(0)} meters away from Point ${_currentPointIndex + 1}";
       });
-      return;
-    }
+
+      // Check if user is within 25 meters and we haven't played this audio yet
+      if (distanceInMeters < 25 && !_hasPlayedCurrent) {
+        _playAudioForPoint(currentTargetPoint);
+      }
+    });
+  }
+
+  Future<void> _playAudioForPoint(TourPoint point) async {
+    setState(() {
+      _hasPlayedCurrent = true; // Mark as played to prevent re-triggering
+      // UPDATED status message
+      _statusMessage = "Playing audio for Point ${_currentPointIndex + 1}";
+    });
 
     try {
-      setState(() {
-        _statusMessage = "Playing audio for waypoint ${index + 1}...";
-        _playedIndices.add(index);
-      });
+      // The audio path from the server is relative, so we build the full URL
+      final audioUrl = '$serverBaseUrl/${point.audioFilePath}';
+      await _audioPlayer.setUrl(audioUrl);
+      _audioPlayer.play();
 
-      await _audioPlayer!.startPlayer(
-        fromURI: point.audioPath,
-        whenFinished: () {
+      // Listen for when the audio completes
+      _audioPlayer.playerStateStream.listen((state) {
+        if (state.processingState == ProcessingState.completed) {
+          // Move to the next point
           setState(() {
-            _nextWaypointIndex++;
-            if (_nextWaypointIndex < widget.tour.waypoints.length) {
-              _statusMessage = "Walk towards waypoint ${_nextWaypointIndex + 1}.";
+            _currentPointIndex++;
+            _hasPlayedCurrent = false; // Reset for the next point
+            if (_currentPointIndex >= _tour!.points.length) {
+                _statusMessage = "Tour completed!";
+                _positionStreamSubscription?.cancel();
             } else {
-              _statusMessage = "Tour complete!";
-              _locationSubscription?.cancel();
+                 _statusMessage = "Audio finished. Walk to the next point.";
+                 _goToPoint(_tour!.points[_currentPointIndex]);
             }
           });
-        },
-      );
-    } catch (e) {
-      print("Error during startPlayer: $e");
-      setState(() {
-        _nextWaypointIndex++;
+        }
       });
+
+    } catch (e) {
+        setState(() {
+            _statusMessage = "Error playing audio: $e";
+        });
     }
   }
 
   @override
   void dispose() {
-    _locationSubscription?.cancel();
-    _audioPlayer!.closePlayer();
-    _audioPlayer = null;
+    _positionStreamSubscription?.cancel();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -809,25 +412,195 @@ class _PlayingScreenState extends State<PlayingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Playing: ${widget.tour.name}'),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
+        title: Text(_tour?.title ?? 'Loading Tour...'),
+      ),
+      body: Stack(
+        children: [
+          GoogleMap(
+            onMapCreated: (controller) => _mapController.complete(controller),
+            initialCameraPosition: const CameraPosition(target: LatLng(0, 0), zoom: 14),
+            markers: _markers,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              color: Colors.white.withOpacity(0.9),
+              child: Text(
+                _statusMessage,
+                style: Theme.of(context).textTheme.titleMedium,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Duplicated from LocationRecordingScreen to ensure permissions are handled.
+  Future<void> _determinePosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _statusMessage = 'Location services are disabled.');
+      return;
+    }
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => _statusMessage = 'Location permissions are denied.');
+        return;
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _statusMessage = 'Location permissions are permanently denied.');
+      return;
+    }
+  }
+}
+
+
+//-------------------------------------------------
+// 4. The Google Maps Screen (Manual Recording)
+//-------------------------------------------------
+class MapScreen extends StatefulWidget {
+  const MapScreen({super.key});
+
+  @override
+  State<MapScreen> createState() => MapScreenState();
+}
+
+class MapScreenState extends State<MapScreen> {
+  final Completer<GoogleMapController> _controller = Completer<GoogleMapController>();
+  static const CameraPosition _kInitialPosition = CameraPosition(
+    target: LatLng(40.7128, -74.0060),
+    zoom: 14.0,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Manual Recording'),
+        backgroundColor: Colors.green[700],
+      ),
+      body: GoogleMap(
+        mapType: MapType.hybrid,
+        initialCameraPosition: _kInitialPosition,
+        onMapCreated: (GoogleMapController controller) {
+          _controller.complete(controller);
+        },
+      ),
+    );
+  }
+}
+
+//-------------------------------------------------
+// 5. The "Record at Location" Screen
+//-------------------------------------------------
+class LocationRecordingScreen extends StatefulWidget {
+  const LocationRecordingScreen({super.key});
+
+  @override
+  State<LocationRecordingScreen> createState() => _LocationRecordingScreenState();
+}
+
+class _LocationRecordingScreenState extends State<LocationRecordingScreen> {
+  Position? _currentPosition;
+  String _statusMessage = 'Fetching location...';
+  bool _isRecording = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _determinePosition();
+  }
+
+  Future<void> _determinePosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _statusMessage = 'Location services are disabled.');
+      return;
+    }
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => _statusMessage = 'Location permissions are denied.');
+        return;
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => _statusMessage = 'Location permissions are permanently denied.');
+      return;
+    }
+    Geolocator.getPositionStream().listen((Position position) {
+      setState(() {
+        _currentPosition = position;
+        _statusMessage = 'Location found!';
+      });
+    });
+  }
+
+  void _toggleRecording() {
+    setState(() {
+      _isRecording = !_isRecording;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Live Location Recording'),
       ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+          children: <Widget>[
+            const Icon(Icons.my_location, size: 60, color: Colors.blue),
+            const SizedBox(height: 20),
             Text(
-              _statusMessage,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
+              'CURRENT LOCATION',
+              style: Theme.of(context).textTheme.headlineSmall,
             ),
-            const SizedBox(height: 30),
-            if (_distanceToNextPoint >= 0 && _nextWaypointIndex < widget.tour.waypoints.length)
+            const SizedBox(height: 10),
+            if (_currentPosition != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Text(
+                  'Latitude: ${_currentPosition!.latitude}\nLongitude: ${_currentPosition!.longitude}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 20),
+                ),
+              )
+            else
               Text(
-                "Distance to next waypoint: ${_distanceToNextPoint.toStringAsFixed(0)} meters",
-                style: const TextStyle(fontSize: 18),
+                _statusMessage,
+                style: const TextStyle(fontSize: 20),
               ),
+            const SizedBox(height: 40),
+            ElevatedButton.icon(
+              icon: Icon(_isRecording ? Icons.stop : Icons.mic),
+              label: Text(_isRecording ? 'Stop Recording' : 'Start Recording'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isRecording ? Colors.red : Colors.green,
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                textStyle: const TextStyle(fontSize: 20),
+              ),
+              onPressed: _currentPosition != null ? _toggleRecording : null,
+            ),
           ],
         ),
       ),
