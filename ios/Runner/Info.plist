@@ -13,7 +13,8 @@
 	<string>This app needs access to your location to play tour points as you approach them.</string>
 
 
-
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs access to location to show your position on the map.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Tour App</string>
 	<key>CFBundleDevelopmentRegion</key>

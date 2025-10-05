@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
@@ -28,13 +30,108 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tour App',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
-        useMaterial3: true,
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const HomeScreen(),
+      home: const MyHomePage(title: 'Tour App'),
     );
   }
 }
+
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key, required this.title});
+
+  final String title;
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  final TextEditingController _addressController = TextEditingController();
+  String _coordinates = 'No coordinates';
+  final Completer<GoogleMapController> _controller = Completer();
+  final Set<Marker> _markers = {};
+  static const CameraPosition _initialPosition = CameraPosition(
+    target: LatLng(40.7128, -74.0060),
+    zoom: 14.0,
+  );
+
+  Future<void> _getCoordinates() async {
+    try {
+      final locations = await locationFromAddress(_addressController.text);
+      if (locations.isNotEmpty) {
+        final location = locations.first;
+        setState(() {
+          _coordinates =
+              'Lat: ${location.latitude}, Lng: ${location.longitude}';
+          _markers.clear();
+          _markers.add(
+            Marker(
+              markerId: const MarkerId('selected-location'),
+              position: LatLng(location.latitude, location.longitude),
+            ),
+          );
+        });
+        final controller = await _controller.future;
+        await controller.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(location.latitude, location.longitude),
+              zoom: 16.0,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _coordinates = 'Error: Could not get coordinates';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(
+              controller: _addressController,
+              decoration: const InputDecoration(
+                labelText: 'Enter Address',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16.0),
+            ElevatedButton(
+              onPressed: _getCoordinates,
+              child: const Text('Accept Address'),
+            ),
+            const SizedBox(height: 16.0),
+            Text(_coordinates),
+            const SizedBox(height: 16.0),
+            Expanded(
+              child: GoogleMap(
+                mapType: MapType.normal,
+                initialCameraPosition: _initialPosition,
+                onMapCreated: (GoogleMapController controller) {
+                  _controller.complete(controller);
+                },
+                markers: _markers,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
