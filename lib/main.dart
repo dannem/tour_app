@@ -9,7 +9,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
-// import 'dart:io';
+import 'dart:io';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -27,7 +27,7 @@ class TourPoint {
   final double longitude;
   final String audioFilePath;
   final String? localAudioPath;
-  final String? name; // Added a name for waypoints
+  final String? name;
 
   TourPoint({
     required this.id,
@@ -40,11 +40,11 @@ class TourPoint {
 
   factory TourPoint.fromJson(Map<String, dynamic> json) {
     return TourPoint(
-      id: json['id'],
-      latitude: json['latitude'],
-      longitude: json['longitude'],
-      audioFilePath: json['audio_filename'],
-      name: json['name'], // Assuming server might send a name
+      id: json['id'] as int,
+      latitude: (json['latitude'] as num).toDouble(),
+      longitude: (json['longitude'] as num).toDouble(),
+      audioFilePath: json['audio_filename'] as String? ?? '',
+      name: json['name'] as String?,
     );
   }
 }
@@ -63,12 +63,21 @@ class Tour {
   });
 
   factory Tour.fromJson(Map<String, dynamic> json) {
-    var pointsList = json['waypoints'] as List? ?? [];
-    List<TourPoint> tourPoints = pointsList.map((i) => TourPoint.fromJson(i)).toList();
+    var pointsList = json['waypoints'] as List<dynamic>? ?? [];
+    List<TourPoint> tourPoints = pointsList.map((i) {
+      try {
+        return TourPoint.fromJson(i as Map<String, dynamic>);
+      } catch (e) {
+        print('Error parsing waypoint: $e');
+        print('Waypoint data: $i');
+        rethrow;
+      }
+    }).toList();
+
     return Tour(
-      id: json['id'],
-      title: json['name'],
-      description: json['description'],
+      id: json['id'] as int,
+      title: json['name'] as String? ?? 'Unnamed Tour',
+      description: json['description'] as String? ?? '',
       points: tourPoints,
     );
   }
@@ -78,13 +87,25 @@ class ApiService {
   Future<List<Tour>> fetchTours() async {
     try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/'));
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
       if (response.statusCode == 200) {
         List<dynamic> toursJson = json.decode(response.body);
-        return toursJson.map((json) => Tour.fromJson(json)).toList();
+        return toursJson.map((json) {
+          try {
+            return Tour.fromJson(json as Map<String, dynamic>);
+          } catch (e) {
+            print('Error parsing tour: $e');
+            print('Tour data: $json');
+            rethrow;
+          }
+        }).toList();
       } else {
         throw Exception('Failed to load tours from server (Status code: ${response.statusCode})');
       }
     } catch (e) {
+      print('API Error: $e');
       throw Exception('Could not connect to server or parse tours. Error: $e');
     }
   }
@@ -92,12 +113,15 @@ class ApiService {
   Future<Tour> fetchTourDetails(int tourId) async {
      try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/$tourId'));
+      print('Tour details response status: ${response.statusCode}');
+
       if (response.statusCode == 200) {
-        return Tour.fromJson(json.decode(response.body));
+        return Tour.fromJson(json.decode(response.body) as Map<String, dynamic>);
       } else {
         throw Exception('Failed to load tour details (Status code: ${response.statusCode})');
       }
     } catch (e) {
+      print('Tour details error: $e');
       throw Exception('Could not connect to server or parse tour details. Error: $e');
     }
   }
@@ -113,10 +137,10 @@ class ApiService {
         'description': description,
       }),
     );
-    if (response.statusCode == 200) {
-      return Tour.fromJson(jsonDecode(response.body));
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return Tour.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
     } else {
-      throw Exception('Failed to create tour.');
+      throw Exception('Failed to create tour. Status: ${response.statusCode}');
     }
   }
 
@@ -131,7 +155,7 @@ class ApiService {
       'POST',
       Uri.parse('$serverBaseUrl/tours/$tourId/waypoints/'),
     );
-    request.fields['name'] = name; // Add name to the request
+    request.fields['name'] = name;
     request.fields['latitude'] = latitude.toString();
     request.fields['longitude'] = longitude.toString();
     request.files.add(
@@ -368,7 +392,7 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
         });
         await ApiService().createWaypoint(
           tourId: newTour.id,
-          name: point.name!,
+          name: point.name ?? 'Waypoint ${i + 1}',
           latitude: point.latitude,
           longitude: point.longitude,
           audioFilePath: point.localAudioPath!,
@@ -436,7 +460,7 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
                     final point = _newWaypoints[index];
                     return ListTile(
                       leading: CircleAvatar(child: Text('${index + 1}')),
-                      title: Text(point.name ?? 'Unnamed Waypoint'),
+                      title: Text(point.name ?? 'Waypoint ${index + 1}'),
                       subtitle: Text('Lat: ${point.latitude.toStringAsFixed(4)}, Lon: ${point.longitude.toStringAsFixed(4)}'),
                       trailing: const Icon(Icons.mic),
                     );
@@ -455,8 +479,8 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
             });
           }
         },
-        tooltip: 'Add New Waypoint',
         child: const Icon(Icons.add),
+        tooltip: 'Add New Waypoint',
       ),
     );
   }
@@ -723,7 +747,7 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
           return Marker(
             markerId: MarkerId(point.id.toString()),
             position: LatLng(point.latitude, point.longitude),
-            infoWindow: InfoWindow(title: 'Point ${point.id}'),
+            infoWindow: InfoWindow(title: point.name ?? 'Point ${point.id}'),
           );
         }).toSet();
       });
