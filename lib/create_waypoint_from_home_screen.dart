@@ -4,7 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
-import 'package:path/path.dart' as path; // Add 'as path' to create an alias
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 const String baseUrl = "https://tour-app-server.onrender.com";
 
@@ -16,11 +17,92 @@ class CreateWaypointFromHomeScreen extends StatefulWidget {
 }
 
 class _CreateWaypointFromHomeScreenState extends State<CreateWaypointFromHomeScreen> {
-  final _addressController = TextEditingController();
-  final _latController = TextEditingController();
-  final _lonController = TextEditingController();
+  final _nameController = TextEditingController();
   File? _audioFile;
   bool _isUploading = false;
+  String _statusMessage = 'Getting location...';
+  Position? _currentPosition;
+
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() {
+          _statusMessage = 'Location services are disabled. Please enable them.';
+        });
+        return;
+      }
+
+      // Check location permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() {
+            _statusMessage = 'Location permissions are denied.';
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _statusMessage = 'Location permissions are permanently denied.';
+        });
+        return;
+      }
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // Try to get address from coordinates
+      try {
+        List<Placemark> placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+        );
+
+        if (placemarks.isNotEmpty) {
+          final placemark = placemarks.first;
+          String address = '';
+          if (placemark.street != null && placemark.street!.isNotEmpty) {
+            address = placemark.street!;
+          }
+          if (placemark.locality != null && placemark.locality!.isNotEmpty) {
+            if (address.isNotEmpty) address += ', ';
+            address += placemark.locality!;
+          }
+          _nameController.text = address.isNotEmpty ? address : 'Home';
+        } else {
+          _nameController.text = 'Home';
+        }
+      } catch (e) {
+        _nameController.text = 'Home';
+      }
+
+      setState(() {
+        _currentPosition = position;
+        _statusMessage = 'Location found: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error getting location: $e';
+      });
+    }
+  }
+
+  String _getFileName(String filePath) {
+    return filePath.split('/').last;
+  }
 
   Future<void> _pickAudioFile() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -32,18 +114,13 @@ class _CreateWaypointFromHomeScreenState extends State<CreateWaypointFromHomeScr
       setState(() {
         _audioFile = File(result.files.single.path!);
       });
-      // Use path.basename to avoid conflict
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Selected file: ${path.basename(_audioFile!.path)}')),
+        SnackBar(content: Text('Selected file: ${_getFileName(_audioFile!.path)}')),
       );
     }
   }
 
   Future<void> _submitWaypoint() async {
-    final address = _addressController.text.trim();
-    final latitude = double.tryParse(_latController.text.trim());
-    final longitude = double.tryParse(_lonController.text.trim());
-
     if (_audioFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an audio file.')),
@@ -51,9 +128,16 @@ class _CreateWaypointFromHomeScreenState extends State<CreateWaypointFromHomeScr
       return;
     }
 
-    if (address.isEmpty && (latitude == null || longitude == null)) {
+    if (_currentPosition == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter an address or coordinates.')),
+        const SnackBar(content: Text('Location not available. Please wait or try again.')),
+      );
+      return;
+    }
+
+    if (_nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a waypoint name.')),
       );
       return;
     }
@@ -65,21 +149,18 @@ class _CreateWaypointFromHomeScreenState extends State<CreateWaypointFromHomeScr
     });
 
     try {
-      final url = Uri.parse('$baseUrl/tours/$tourId/waypoints/from_home');
+      final url = Uri.parse('$baseUrl/tours/$tourId/waypoints');
       var request = http.MultipartRequest('POST', url);
 
       request.files.add(await http.MultipartFile.fromPath(
         'audio_file',
         _audioFile!.path,
-        filename: path.basename(_audioFile!.path), // Use path.basename
+        filename: _getFileName(_audioFile!.path),
       ));
 
-      if (address.isNotEmpty) {
-        request.fields['address'] = address;
-      } else {
-        request.fields['latitude'] = latitude!.toString();
-        request.fields['longitude'] = longitude!.toString();
-      }
+      request.fields['name'] = _nameController.text.trim();
+      request.fields['latitude'] = _currentPosition!.latitude.toString();
+      request.fields['longitude'] = _currentPosition!.longitude.toString();
 
       final response = await request.send();
 
@@ -106,65 +187,110 @@ class _CreateWaypointFromHomeScreenState extends State<CreateWaypointFromHomeScr
   }
 
   @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add Waypoint From Home'),
+        title: const Text('Create New Waypoint'),
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
       ),
       body: _isUploading
-          ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent)))
+          ? const Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+              ),
+            )
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  TextField(
-                    controller: _addressController,
-                    decoration: const InputDecoration(
-                      labelText: 'Address',
-                      border: OutlineInputBorder(),
-                      hintText: 'e.g., Eiffel Tower, Paris',
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _currentPosition != null
+                          ? Colors.green.shade50
+                          : Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _currentPosition != null
+                            ? Colors.green
+                            : Colors.orange,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _currentPosition != null
+                              ? Icons.check_circle
+                              : Icons.location_searching,
+                          color: _currentPosition != null
+                              ? Colors.green
+                              : Colors.orange,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _statusMessage,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        if (_currentPosition == null)
+                          IconButton(
+                            icon: const Icon(Icons.refresh),
+                            onPressed: _getCurrentLocation,
+                            tooltip: 'Retry',
+                          ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  const Center(child: Text('OR', style: TextStyle(fontWeight: FontWeight.bold))),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 20),
                   TextField(
-                    controller: _latController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    controller: _nameController,
                     decoration: const InputDecoration(
-                      labelText: 'Latitude',
+                      labelText: 'Waypoint Name',
                       border: OutlineInputBorder(),
-                      hintText: 'e.g., 48.8584',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _lonController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Longitude',
-                      border: OutlineInputBorder(),
-                      hintText: 'e.g., 2.2945',
+                      hintText: 'e.g., Home, My Place',
+                      prefixIcon: Icon(Icons.label),
                     ),
                   ),
                   const SizedBox(height: 20),
                   ElevatedButton.icon(
-                    icon: const Icon(Icons.file_upload),
-                    label: Text(_audioFile == null ? 'Select Audio File' : 'File Selected: ${path.basename(_audioFile!.path)}'),
+                    icon: Icon(_audioFile == null ? Icons.file_upload : Icons.check),
+                    label: Text(
+                      _audioFile == null
+                          ? 'Select Audio File'
+                          : 'File: ${_getFileName(_audioFile!.path)}',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      backgroundColor: _audioFile == null
+                          ? Colors.grey.shade300
+                          : Colors.green.shade100,
+                    ),
                     onPressed: _pickAudioFile,
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 30),
                   ElevatedButton(
-                    onPressed: _submitWaypoint,
+                    onPressed: _currentPosition != null && _audioFile != null
+                        ? _submitWaypoint
+                        : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueAccent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 15),
+                      disabledBackgroundColor: Colors.grey.shade300,
                     ),
-                    child: const Text('Add Waypoint', style: TextStyle(fontSize: 18)),
+                    child: const Text(
+                      'Add Waypoint',
+                      style: TextStyle(fontSize: 18),
+                    ),
                   ),
                 ],
               ),

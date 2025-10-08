@@ -9,7 +9,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
+// import 'dart:io';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -455,8 +455,8 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
             });
           }
         },
-        child: const Icon(Icons.add),
         tooltip: 'Add New Waypoint',
+        child: const Icon(Icons.add),
       ),
     );
   }
