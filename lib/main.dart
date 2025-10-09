@@ -111,7 +111,7 @@ class ApiService {
   }
 
   Future<Tour> fetchTourDetails(int tourId) async {
-     try {
+    try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/$tourId'));
       print('Tour details response status: ${response.statusCode}');
 
@@ -127,20 +127,38 @@ class ApiService {
   }
 
   Future<Tour> createTour(String name, String description) async {
-    final response = await http.post(
-      Uri.parse('$serverBaseUrl/tours/'),
-      headers: <String, String>{
-        'Content-Type': 'application/json; charset=UTF-8',
-      },
-      body: jsonEncode(<String, String>{
-        'name': name,
-        'description': description,
-      }),
-    );
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return Tour.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to create tour. Status: ${response.statusCode}');
+    try {
+      print('Creating tour: $name');
+
+      // Remove trailing slash if present in base URL, then add it to the endpoint
+      final url = serverBaseUrl.endsWith('/')
+          ? '${serverBaseUrl}tours'
+          : '$serverBaseUrl/tours';
+
+      print('POST URL: $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: <String, String>{
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: jsonEncode(<String, String>{
+          'name': name,
+          'description': description,
+        }),
+      );
+
+      print('Create tour response status: ${response.statusCode}');
+      print('Create tour response body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Tour.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+      } else {
+        throw Exception('Failed to create tour. Status: ${response.statusCode}, Body: ${response.body}');
+      }
+    } catch (e) {
+      print('Error creating tour: $e');
+      rethrow;
     }
   }
 
@@ -151,20 +169,56 @@ class ApiService {
     required double longitude,
     required String audioFilePath,
   }) async {
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$serverBaseUrl/tours/$tourId/waypoints/'),
-    );
-    request.fields['name'] = name;
-    request.fields['latitude'] = latitude.toString();
-    request.fields['longitude'] = longitude.toString();
-    request.files.add(
-      await http.MultipartFile.fromPath('audio_file', audioFilePath),
-    );
-    var response = await request.send();
-    if (response.statusCode != 200) {
-      final responseBody = await response.stream.bytesToString();
-      throw Exception('Failed to upload waypoint. Server responded with: $responseBody');
+    try {
+      print('Creating waypoint for tour $tourId');
+      print('Name: $name');
+      print('Location: $latitude, $longitude');
+      print('Audio file path: $audioFilePath');
+
+      // Verify file exists before adding
+      final file = File(audioFilePath);
+      if (!await file.exists()) {
+        throw Exception('Audio file does not exist: $audioFilePath');
+      }
+
+      final fileSize = await file.length();
+      print('File exists, size: $fileSize bytes');
+
+      // Remove trailing slash if present, construct proper URL
+      final baseUrl = serverBaseUrl.endsWith('/')
+          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+          : serverBaseUrl;
+      final url = '$baseUrl/tours/$tourId/waypoints';
+
+      print('POST URL: $url');
+
+      var request = http.MultipartRequest('POST', Uri.parse(url));
+
+      request.fields['name'] = name;
+      request.fields['latitude'] = latitude.toString();
+      request.fields['longitude'] = longitude.toString();
+
+      request.files.add(
+        await http.MultipartFile.fromPath('audio_file', audioFilePath),
+      );
+
+      print('Sending request to server...');
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception(
+          'Failed to upload waypoint. Status: ${response.statusCode}, Body: ${response.body}'
+        );
+      }
+
+      print('Waypoint created successfully');
+    } catch (e) {
+      print('Error in createWaypoint: $e');
+      rethrow;
     }
   }
 }
@@ -232,7 +286,9 @@ class ChoiceScreen extends StatelessWidget {
                   textStyle: const TextStyle(fontSize: 18),
                 ),
                 onPressed: () {
-                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Manual Recording not implemented yet.')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Manual Recording not implemented yet.'))
+                  );
                 },
               ),
             ),
@@ -310,14 +366,14 @@ class _NameTourScreenState extends State<NameTourScreen> {
                 textStyle: const TextStyle(fontSize: 18),
               ),
               onPressed: () {
-                 if (_nameController.text.isNotEmpty) {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => AddWaypointsScreen(tourName: _nameController.text),
-                      ),
-                    );
-                 }
+                if (_nameController.text.isNotEmpty) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AddWaypointsScreen(tourName: _nameController.text),
+                    ),
+                  );
+                }
               },
               child: const Text('Continue'),
             )
@@ -342,24 +398,53 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
   String _uploadStatus = '';
 
   void _finishAndSaveTour() {
+    print('=== _finishAndSaveTour called ===');
+    print('Number of waypoints: ${_newWaypoints.length}');
+
+    if (_newWaypoints.isEmpty) {
+      print('No waypoints - showing error');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please add at least one waypoint before saving the tour.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     final descriptionController = TextEditingController();
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
           title: const Text('Add Description & Save'),
           content: TextField(
             controller: descriptionController,
-            decoration: const InputDecoration(labelText: 'Tour Description'),
+            decoration: const InputDecoration(
+              labelText: 'Tour Description',
+              hintText: 'Enter a description for your tour'
+            ),
             maxLines: 3,
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () {
+                print('Save dialog cancelled');
+                Navigator.pop(context);
+              },
+              child: const Text('Cancel'),
+            ),
             ElevatedButton(
               onPressed: () {
+                print('Save button pressed in dialog');
+                final desc = descriptionController.text.isEmpty
+                    ? 'No description provided'
+                    : descriptionController.text;
+                print('Description: $desc');
                 Navigator.pop(context);
-                _uploadTour(descriptionController.text);
+                _uploadTour(desc);
               },
               child: const Text('Save Tour'),
             ),
@@ -370,12 +455,9 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
   }
 
   void _uploadTour(String description) async {
-    if (description.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Description cannot be empty.')),
-      );
-      return;
-    }
+    print('=== _uploadTour called ===');
+    print('Description: $description');
+    print('Number of waypoints to upload: ${_newWaypoints.length}');
 
     setState(() {
       _isUploading = true;
@@ -383,13 +465,33 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
     });
 
     try {
+      // Create the tour first
+      print('Creating tour: ${widget.tourName}');
       final newTour = await ApiService().createTour(widget.tourName, description);
+      print('✅ Tour created successfully with ID: ${newTour.id}');
 
+      // Upload each waypoint
       for (int i = 0; i < _newWaypoints.length; i++) {
         final point = _newWaypoints[i];
         setState(() {
           _uploadStatus = 'Uploading waypoint ${i + 1} of ${_newWaypoints.length}...';
         });
+
+        print('\n--- Uploading waypoint ${i + 1} ---');
+        print('Name: ${point.name}');
+        print('Lat: ${point.latitude}, Lon: ${point.longitude}');
+        print('Local audio path: ${point.localAudioPath}');
+
+        // Verify the file exists
+        if (point.localAudioPath == null || point.localAudioPath!.isEmpty) {
+          throw Exception('Waypoint ${i + 1} has no audio file');
+        }
+
+        final audioFile = File(point.localAudioPath!);
+        if (!await audioFile.exists()) {
+          throw Exception('Audio file not found for waypoint ${i + 1}: ${point.localAudioPath}');
+        }
+
         await ApiService().createWaypoint(
           tourId: newTour.id,
           name: point.name ?? 'Waypoint ${i + 1}',
@@ -397,6 +499,8 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
           longitude: point.longitude,
           audioFilePath: point.localAudioPath!,
         );
+
+        print('✅ Waypoint ${i + 1} uploaded successfully');
       }
 
       setState(() {
@@ -404,22 +508,44 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
         _isUploading = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('New tour saved successfully!'), backgroundColor: Colors.green),
-      );
-      Navigator.of(context).pop();
+      print('=== ALL UPLOADS COMPLETE ===');
 
-    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tour saved successfully!'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+
+      // Navigate back to the main screen
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+
+    } catch (e, stackTrace) {
+      print('❌ ERROR during upload: $e');
+      print('Stack trace: $stackTrace');
+
       setState(() {
-        _uploadStatus = 'Error during upload: $e';
+        _uploadStatus = 'Error: ${e.toString()}';
         _isUploading = false;
       });
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Upload failed: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
       );
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -442,7 +568,14 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
                 children: [
                   const CircularProgressIndicator(),
                   const SizedBox(height: 20),
-                  Text(_uploadStatus),
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      _uploadStatus,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
                 ],
               ),
             )
@@ -461,27 +594,45 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
                     return ListTile(
                       leading: CircleAvatar(child: Text('${index + 1}')),
                       title: Text(point.name ?? 'Waypoint ${index + 1}'),
-                      subtitle: Text('Lat: ${point.latitude.toStringAsFixed(4)}, Lon: ${point.longitude.toStringAsFixed(4)}'),
-                      trailing: const Icon(Icons.mic),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Lat: ${point.latitude.toStringAsFixed(4)}, Lon: ${point.longitude.toStringAsFixed(4)}'),
+                          if (point.localAudioPath != null)
+                            Text(
+                              'Audio: ${point.localAudioPath!.split('/').last}',
+                              style: const TextStyle(fontSize: 12, color: Colors.green),
+                            ),
+                        ],
+                      ),
+                      trailing: const Icon(Icons.mic, color: Colors.blue),
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final newPoint = await Navigator.push<TourPoint>(
-            context,
-            MaterialPageRoute(builder: (context) => const EditWaypointScreen()),
-          );
+      floatingActionButton: _isUploading
+          ? null
+          : FloatingActionButton(
+              onPressed: () async {
+                final newPoint = await Navigator.push<TourPoint>(
+                  context,
+                  MaterialPageRoute(builder: (context) => const EditWaypointScreen()),
+                );
 
-          if (newPoint != null) {
-            setState(() {
-              _newWaypoints.add(newPoint);
-            });
-          }
-        },
-        child: const Icon(Icons.add),
-        tooltip: 'Add New Waypoint',
-      ),
+                if (newPoint != null) {
+                  setState(() {
+                    _newWaypoints.add(newPoint);
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Waypoint "${newPoint.name}" added'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              },
+              child: const Icon(Icons.add),
+              tooltip: 'Add New Waypoint',
+            ),
     );
   }
 }
@@ -536,6 +687,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
 
     if (_isRecording) {
       final path = await _recorder.stopRecorder();
+      print('Recording stopped. File saved at: $path');
       setState(() {
         _recordedFilePath = path;
         _isRecording = false;
@@ -543,7 +695,9 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
       });
     } else {
       _recordedFilePath = null;
-      await _recorder.startRecorder(toFile: 'audio_${DateTime.now().millisecondsSinceEpoch}.aac');
+      final filePath = 'audio_${DateTime.now().millisecondsSinceEpoch}.aac';
+      print('Starting recording to: $filePath');
+      await _recorder.startRecorder(toFile: filePath);
       setState(() {
         _isRecording = true;
         _status = 'Recording audio...';
@@ -558,6 +712,8 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
       );
       return;
     }
+
+    print('Saving waypoint with audio file: $_recordedFilePath');
 
     final newPoint = TourPoint(
       id: 0,
@@ -595,10 +751,23 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(_status, style: const TextStyle(color: Colors.grey)),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _position != null ? Colors.green.shade50 : Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _position != null ? Colors.green : Colors.orange,
+                ),
+              ),
+              child: Text(_status, style: const TextStyle(fontSize: 14)),
+            ),
             const SizedBox(height: 10),
             if (_position != null)
-              Text('Lat: ${_position!.latitude.toStringAsFixed(4)}, Lon: ${_position!.longitude.toStringAsFixed(4)}'),
+              Text(
+                'Lat: ${_position!.latitude.toStringAsFixed(4)}, Lon: ${_position!.longitude.toStringAsFixed(4)}',
+                style: const TextStyle(color: Colors.grey),
+              ),
             const SizedBox(height: 20),
             TextField(
               controller: _nameController,
@@ -620,7 +789,11 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
             if (_recordedFilePath != null && !_isRecording)
               Padding(
                 padding: const EdgeInsets.only(top: 10.0),
-                child: Text('Audio saved successfully!', textAlign: TextAlign.center, style: TextStyle(color: Colors.green[700])),
+                child: Text(
+                  'Audio saved: ${_recordedFilePath!.split('/').last}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.green[700]),
+                ),
               )
           ],
         ),
@@ -773,7 +946,6 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
     ));
   }
 
-
   Future<void> _startLocationListener() async {
     await _determinePosition();
     _positionStreamSubscription = Geolocator.getPositionStream(
@@ -810,10 +982,14 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
     });
 
     try {
-      final audioUrl = '$serverBaseUrl/${point.audioFilePath}';
+      // Construct the correct audio URL - the audioFilePath is just the filename
+      final audioUrl = '$serverBaseUrl/uploads/${point.audioFilePath}';
+      print('Playing audio from: $audioUrl');
+
       await _audioPlayer.setUrl(audioUrl);
       _audioPlayer.play();
     } catch (e) {
+      print('Error playing audio: $e');
       if (!mounted) return;
       setState(() {
         _statusMessage = "Error playing audio: $e";
