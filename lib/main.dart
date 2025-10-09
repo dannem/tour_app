@@ -221,6 +221,31 @@ class ApiService {
       rethrow;
     }
   }
+  Future<void> deleteTour(int tourId) async {
+    try {
+      print('Deleting tour: $tourId');
+
+      final baseUrl = serverBaseUrl.endsWith('/')
+          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+          : serverBaseUrl;
+      final url = '$baseUrl/tours/$tourId';
+
+      print('DELETE URL: $url');
+
+      final response = await http.delete(Uri.parse(url));
+
+      print('Delete tour response status: ${response.statusCode}');
+
+      if (response.statusCode != 204 && response.statusCode != 200) {
+        throw Exception('Failed to delete tour. Status: ${response.statusCode}');
+      }
+
+      print('Tour deleted successfully');
+    } catch (e) {
+      print('Error deleting tour: $e');
+      rethrow;
+    }
+  }
 }
 
 // --- App Main Widget ---
