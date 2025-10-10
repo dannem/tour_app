@@ -843,11 +843,84 @@ class _TourListScreenState extends State<TourListScreen> {
     futureTours = ApiService().fetchTours();
   }
 
+  void _refreshTours() {
+    setState(() {
+      futureTours = ApiService().fetchTours();
+    });
+  }
+
+  Future<void> _deleteTour(Tour tour) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Delete Tour'),
+          content: Text('Are you sure you want to delete "${tour.title}"? This action cannot be undone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Deleting tour...'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+
+    try {
+      await ApiService().deleteTour(tour.id);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Tour "${tour.title}" deleted successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      _refreshTours();
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete tour: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Select a Tour'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshTours,
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: FutureBuilder<List<Tour>>(
         future: futureTours,
@@ -857,26 +930,135 @@ class _TourListScreenState extends State<TourListScreen> {
           } else if (snapshot.hasError) {
             return Center(child: Padding(
               padding: const EdgeInsets.all(16.0),
-              child: Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                  const SizedBox(height: 16),
+                  Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                    onPressed: _refreshTours,
+                  ),
+                ],
+              ),
             ));
           } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('No tours found on the server.'));
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.tour, size: 64, color: Colors.grey),
+                  const SizedBox(height: 16),
+                  const Text('No tours found on the server.', style: TextStyle(fontSize: 16)),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                    onPressed: _refreshTours,
+                  ),
+                ],
+              ),
+            );
           } else {
             List<Tour> tours = snapshot.data!;
             return ListView.builder(
               itemCount: tours.length,
               itemBuilder: (context, index) {
-                return ListTile(
-                  title: Text(tours[index].title),
-                  subtitle: Text(tours[index].description),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => TourPlaybackScreen(tourId: tours[index].id),
-                      ),
+                final tour = tours[index];
+                return Dismissible(
+                  key: Key(tour.id.toString()),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    color: Colors.red,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.only(right: 20.0),
+                    child: const Icon(Icons.delete, color: Colors.white, size: 32),
+                  ),
+                  confirmDismiss: (direction) async {
+                    return await showDialog<bool>(
+                      context: context,
+                      builder: (BuildContext context) {
+                        return AlertDialog(
+                          title: const Text('Delete Tour'),
+                          content: Text('Are you sure you want to delete "${tour.title}"?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () => Navigator.of(context).pop(true),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('Delete'),
+                            ),
+                          ],
+                        );
+                      },
                     );
                   },
+                  onDismissed: (direction) async {
+                    try {
+                      await ApiService().deleteTour(tour.id);
+                      if (!mounted) return;
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Tour "${tour.title}" deleted'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+
+                      _refreshTours();
+                    } catch (e) {
+                      if (!mounted) return;
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to delete: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+
+                      _refreshTours();
+                    }
+                  },
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: Colors.blue,
+                      child: Text('${tour.points.length}', style: const TextStyle(color: Colors.white)),
+                    ),
+                    title: Text(tour.title),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(tour.description),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${tour.points.length} waypoint${tour.points.length != 1 ? 's' : ''}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      onPressed: () => _deleteTour(tour),
+                      tooltip: 'Delete Tour',
+                    ),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => TourPlaybackScreen(tourId: tour.id),
+                        ),
+                      );
+                    },
+                  ),
                 );
               },
             );
