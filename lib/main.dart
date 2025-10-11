@@ -761,6 +761,8 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
   }
 }
 
+enum LocationMethod { gps, address, map }
+
 class EditWaypointScreen extends StatefulWidget {
   final TourPoint? existingWaypoint;
 
@@ -781,7 +783,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
   bool _isRecording = false;
   String? _recordedFilePath;
   bool _isEditMode = false;
-  bool _useAddress = false;
+  LocationMethod _locationMethod = LocationMethod.gps;
   bool _isGeocodingAddress = false;
 
   @override
@@ -790,7 +792,6 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
     _isEditMode = widget.existingWaypoint != null;
 
     if (_isEditMode) {
-      // Populate fields with existing waypoint data
       _nameController.text = widget.existingWaypoint!.name ?? '';
       _position = Position(
         latitude: widget.existingWaypoint!.latitude,
@@ -818,8 +819,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
     await _recorder.openRecorder();
     setState(() => _isRecorderReady = true);
 
-    // Only get new location if this is a new waypoint and not using address mode
-    if (!_isEditMode && !_useAddress) {
+    if (!_isEditMode && _locationMethod == LocationMethod.gps) {
       try {
         _position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
         List<Placemark> placemarks = await placemarkFromCoordinates(_position!.latitude, _position!.longitude);
@@ -831,7 +831,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
         }
         setState(() => _status = 'Location found. Ready to record audio.');
       } catch (e) {
-        setState(() => _status = 'Could not get location. Try using address instead.');
+        setState(() => _status = 'Could not get location. Try using address or map instead.');
       }
     }
   }
@@ -866,10 +866,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
         return;
       }
 
-      // Use the first result
       final location = locations.first;
-
-      // Get the formatted address back from coordinates
       List<Placemark> placemarks = await placemarkFromCoordinates(
         location.latitude,
         location.longitude,
@@ -921,6 +918,67 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  Future<void> _openMapPicker() async {
+    LatLng initialPosition = const LatLng(37.7749, -122.4194);
+
+    try {
+      Position currentPos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low,
+      );
+      initialPosition = LatLng(currentPos.latitude, currentPos.longitude);
+    } catch (e) {
+      print('Could not get current position for map: $e');
+    }
+
+    final selectedLocation = await Navigator.push<LatLng>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MapPickerScreen(initialPosition: initialPosition),
+      ),
+    );
+
+    if (selectedLocation != null) {
+      setState(() {
+        _position = Position(
+          latitude: selectedLocation.latitude,
+          longitude: selectedLocation.longitude,
+          timestamp: DateTime.now(),
+          accuracy: 0,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+        _status = 'Location selected from map!';
+      });
+
+      try {
+        List<Placemark> placemarks = await placemarkFromCoordinates(
+          selectedLocation.latitude,
+          selectedLocation.longitude,
+        );
+        if (placemarks.isNotEmpty) {
+          final placemark = placemarks.first;
+          String address = [
+            placemark.street,
+            placemark.locality,
+            placemark.administrativeArea,
+          ].where((e) => e != null && e.isNotEmpty).join(', ');
+
+          if (address.isNotEmpty) {
+            _nameController.text = address;
+          } else {
+            _nameController.text = "Location at ${selectedLocation.latitude.toStringAsFixed(4)}, ${selectedLocation.longitude.toStringAsFixed(4)}";
+          }
+        }
+      } catch (e) {
+        _nameController.text = "Location at ${selectedLocation.latitude.toStringAsFixed(4)}, ${selectedLocation.longitude.toStringAsFixed(4)}";
+      }
     }
   }
 
@@ -996,7 +1054,6 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Location method toggle (only for new waypoints)
             if (!_isEditMode)
               Container(
                 padding: const EdgeInsets.all(12),
@@ -1017,16 +1074,16 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
-                            icon: Icon(_useAddress ? Icons.radio_button_off : Icons.radio_button_checked),
-                            label: const Text('Use GPS'),
+                            icon: Icon(_locationMethod == LocationMethod.gps ? Icons.radio_button_checked : Icons.radio_button_off),
+                            label: const Text('GPS'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: _useAddress ? Colors.grey.shade300 : Colors.blue,
-                              foregroundColor: _useAddress ? Colors.black : Colors.white,
+                              backgroundColor: _locationMethod == LocationMethod.gps ? Colors.blue : Colors.grey.shade300,
+                              foregroundColor: _locationMethod == LocationMethod.gps ? Colors.white : Colors.black,
                             ),
                             onPressed: () {
-                              if (_useAddress) {
+                              if (_locationMethod != LocationMethod.gps) {
                                 setState(() {
-                                  _useAddress = false;
+                                  _locationMethod = LocationMethod.gps;
                                   _position = null;
                                   _addressController.clear();
                                   _status = 'Getting GPS location...';
@@ -1036,20 +1093,38 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
                             },
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 4),
                         Expanded(
                           child: ElevatedButton.icon(
-                            icon: Icon(_useAddress ? Icons.radio_button_checked : Icons.radio_button_off),
-                            label: const Text('Use Address'),
+                            icon: Icon(_locationMethod == LocationMethod.address ? Icons.radio_button_checked : Icons.radio_button_off),
+                            label: const Text('Address'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: _useAddress ? Colors.blue : Colors.grey.shade300,
-                              foregroundColor: _useAddress ? Colors.white : Colors.black,
+                              backgroundColor: _locationMethod == LocationMethod.address ? Colors.blue : Colors.grey.shade300,
+                              foregroundColor: _locationMethod == LocationMethod.address ? Colors.white : Colors.black,
                             ),
                             onPressed: () {
                               setState(() {
-                                _useAddress = true;
+                                _locationMethod = LocationMethod.address;
                                 _position = null;
                                 _status = 'Enter an address below';
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: Icon(_locationMethod == LocationMethod.map ? Icons.radio_button_checked : Icons.radio_button_off),
+                            label: const Text('Map'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _locationMethod == LocationMethod.map ? Colors.blue : Colors.grey.shade300,
+                              foregroundColor: _locationMethod == LocationMethod.map ? Colors.white : Colors.black,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _locationMethod = LocationMethod.map;
+                                _position = null;
+                                _status = 'Tap button below to select location on map';
                               });
                             },
                           ),
@@ -1061,8 +1136,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
               ),
             const SizedBox(height: 16),
 
-            // Address input (only shown when using address mode)
-            if (_useAddress && !_isEditMode)
+            if (_locationMethod == LocationMethod.address && !_isEditMode)
               Column(
                 children: [
                   TextField(
@@ -1096,7 +1170,23 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
                 ],
               ),
 
-            // Status box
+            if (_locationMethod == LocationMethod.map && !_isEditMode)
+              Column(
+                children: [
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.map),
+                    label: Text(_position == null ? 'Select Location on Map' : 'Change Location on Map'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                    ),
+                    onPressed: _openMapPicker,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1185,6 +1275,207 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+
+class MapPickerScreen extends StatefulWidget {
+  final LatLng initialPosition;
+
+  const MapPickerScreen({super.key, required this.initialPosition});
+
+  @override
+  State<MapPickerScreen> createState() => _MapPickerScreenState();
+}
+
+class _MapPickerScreenState extends State<MapPickerScreen> {
+  late LatLng _selectedPosition;
+  final Completer<GoogleMapController> _mapController = Completer();
+  Set<Marker> _markers = {};
+  String _addressPreview = 'Tap on the map to select a location';
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedPosition = widget.initialPosition;
+    _addMarker(_selectedPosition);
+    _getAddressFromLatLng(_selectedPosition);
+  }
+
+  void _addMarker(LatLng position) {
+    setState(() {
+      _markers = {
+        Marker(
+          markerId: const MarkerId('selected_location'),
+          position: position,
+          draggable: true,
+          onDragEnd: (newPosition) {
+            _onMapTapped(newPosition);
+          },
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        ),
+      };
+    });
+  }
+
+  void _onMapTapped(LatLng position) {
+    setState(() {
+      _selectedPosition = position;
+      _addMarker(position);
+    });
+    _getAddressFromLatLng(position);
+  }
+
+  Future<void> _getAddressFromLatLng(LatLng position) async {
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        final placemark = placemarks.first;
+        String address = [
+          placemark.street,
+          placemark.locality,
+          placemark.administrativeArea,
+          placemark.country,
+        ].where((e) => e != null && e.isNotEmpty).join(', ');
+
+        setState(() {
+          _addressPreview = address.isNotEmpty
+              ? address
+              : '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+        });
+      } else {
+        setState(() {
+          _addressPreview = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _addressPreview = '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+      });
+    }
+  }
+
+  void _confirmSelection() {
+    Navigator.pop(context, _selectedPosition);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Select Location'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.check),
+            onPressed: _confirmSelection,
+            tooltip: 'Confirm Location',
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          GoogleMap(
+            onMapCreated: (controller) => _mapController.complete(controller),
+            initialCameraPosition: CameraPosition(
+              target: widget.initialPosition,
+              zoom: 15.0,
+            ),
+            markers: _markers,
+            onTap: _onMapTapped,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            mapType: MapType.normal,
+            zoomControlsEnabled: true,
+          ),
+          Positioned(
+            top: 16,
+            left: 16,
+            right: 16,
+            child: Card(
+              elevation: 8,
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.info_outline, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Tap anywhere on the map to select a location',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'You can also drag the marker to adjust',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 16,
+            left: 16,
+            right: 16,
+            child: Card(
+              elevation: 8,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Selected Location:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _addressPreview,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Lat: ${_selectedPosition.latitude.toStringAsFixed(6)}, Lon: ${_selectedPosition.longitude.toStringAsFixed(6)}',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.check_circle),
+                        label: const Text('Confirm This Location'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: _confirmSelection,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
