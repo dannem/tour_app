@@ -1723,6 +1723,8 @@ class _TourListScreenState extends State<TourListScreen> {
   }
 }
 
+// Replace the TourPlaybackScreen class in your main.dart with this code
+
 class TourPlaybackScreen extends StatefulWidget {
   final int tourId;
   const TourPlaybackScreen({super.key, required this.tourId});
@@ -1751,23 +1753,75 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
       if (state.processingState == ProcessingState.completed) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            setState(() {
-              _isAudioPlaying = false;
-              _currentPointIndex++;
-              if (_currentPointIndex >= (_tour?.points.length ?? 0)) {
-                _statusMessage = "Tour completed!";
-                _positionStreamSubscription?.cancel();
-              } else {
-                _statusMessage = "Audio finished. Walk to the next point.";
-                if (_tour != null) {
-                  _goToPoint(_tour!.points[_currentPointIndex]);
-                }
-              }
-            });
+            _moveToNextWaypoint();
           }
         });
       }
     });
+  }
+
+  void _moveToNextWaypoint() {
+    setState(() {
+      _isAudioPlaying = false;
+      _currentPointIndex++;
+      if (_currentPointIndex >= (_tour?.points.length ?? 0)) {
+        _statusMessage = "Tour completed!";
+        _positionStreamSubscription?.cancel();
+      } else {
+        _statusMessage = "Moving to waypoint ${_currentPointIndex + 1}. Walk to the next point.";
+        if (_tour != null) {
+          _goToPoint(_tour!.points[_currentPointIndex]);
+        }
+      }
+    });
+  }
+
+  void _skipCurrentWaypoint() {
+    // Stop audio if playing
+    if (_isAudioPlaying) {
+      _audioPlayer.stop();
+    }
+
+    // Show confirmation dialog
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Skip Waypoint'),
+          content: Text(
+            _currentPointIndex < (_tour?.points.length ?? 0)
+                ? 'Skip waypoint ${_currentPointIndex + 1}?'
+                : 'Tour is already completed.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _moveToNextWaypoint();
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(_currentPointIndex >= (_tour?.points.length ?? 0)
+                        ? 'Tour completed!'
+                        : 'Skipped to waypoint ${_currentPointIndex + 1}'),
+                    backgroundColor: Colors.blue,
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Skip'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _loadTourDetails() async {
@@ -1777,11 +1831,18 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
       setState(() {
         _tour = tour;
         _statusMessage = 'Tour loaded. Waiting for location...';
-        _markers = tour.points.map((point) {
+        _markers = tour.points.asMap().entries.map((entry) {
+          int index = entry.key;
+          TourPoint point = entry.value;
           return Marker(
             markerId: MarkerId(point.id.toString()),
             position: LatLng(point.latitude, point.longitude),
-            infoWindow: InfoWindow(title: point.name ?? 'Point ${point.id}'),
+            infoWindow: InfoWindow(
+              title: '${index + 1}. ${point.name ?? 'Point ${point.id}'}',
+            ),
+            icon: index == 0
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
+                : BitmapDescriptor.defaultMarker,
           );
         }).toSet();
       });
@@ -1805,6 +1866,28 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
         zoom: 16.0,
       )
     ));
+
+    // Update markers to highlight current waypoint
+    if (_tour != null) {
+      setState(() {
+        _markers = _tour!.points.asMap().entries.map((entry) {
+          int index = entry.key;
+          TourPoint p = entry.value;
+          return Marker(
+            markerId: MarkerId(p.id.toString()),
+            position: LatLng(p.latitude, p.longitude),
+            infoWindow: InfoWindow(
+              title: '${index + 1}. ${p.name ?? 'Point ${p.id}'}',
+            ),
+            icon: index == _currentPointIndex
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
+                : index < _currentPointIndex
+                    ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)
+                    : BitmapDescriptor.defaultMarker,
+          );
+        }).toSet();
+      });
+    }
   }
 
   Future<void> _startLocationListener() async {
@@ -1826,7 +1909,7 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
 
       setState(() {
         if (!_isAudioPlaying) {
-          _statusMessage = "You are ${distanceInMeters.toStringAsFixed(0)} meters away from Point ${_currentPointIndex + 1}";
+          _statusMessage = "Waypoint ${_currentPointIndex + 1}/${_tour!.points.length}: ${distanceInMeters.toStringAsFixed(0)}m away";
         }
       });
 
@@ -1839,11 +1922,10 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
   Future<void> _playAudioForPoint(TourPoint point) async {
     setState(() {
       _isAudioPlaying = true;
-      _statusMessage = "Playing audio for Point ${_currentPointIndex + 1}";
+      _statusMessage = "Playing audio for waypoint ${_currentPointIndex + 1}/${_tour!.points.length}";
     });
 
     try {
-      // Construct the correct audio URL - the audioFilePath is just the filename
       final audioUrl = '$serverBaseUrl/uploads/${point.audioFilePath}';
       print('Playing audio from: $audioUrl');
 
@@ -1872,6 +1954,14 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_tour?.title ?? 'Loading Tour...'),
+        actions: [
+          if (_tour != null && _currentPointIndex < _tour!.points.length)
+            IconButton(
+              icon: const Icon(Icons.skip_next),
+              onPressed: _skipCurrentWaypoint,
+              tooltip: 'Skip Waypoint',
+            ),
+        ],
       ),
       body: Stack(
         children: [
@@ -1887,12 +1977,56 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
             left: 0,
             right: 0,
             child: Container(
-              padding: const EdgeInsets.all(12),
-              color: Colors.white.withOpacity(0.9),
-              child: Text(
-                _statusMessage,
-                style: Theme.of(context).textTheme.titleMedium,
-                textAlign: TextAlign.center,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_isAudioPlaying)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 8.0),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      Expanded(
+                        child: Text(
+                          _statusMessage,
+                          style: Theme.of(context).textTheme.titleMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_tour != null && _currentPointIndex < _tour!.points.length)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12.0),
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.skip_next),
+                        label: const Text('Skip to Next Waypoint'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                        onPressed: _skipCurrentWaypoint,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -1927,7 +2061,6 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
     }
   }
 }
-
 class MapScreen extends StatelessWidget {
   const MapScreen({super.key});
 
