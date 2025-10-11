@@ -268,6 +268,7 @@ class TourApp extends StatelessWidget {
 
 // --- Main Screens ---
 
+
 class ChoiceScreen extends StatelessWidget {
   const ChoiceScreen({super.key});
 
@@ -300,23 +301,6 @@ class ChoiceScreen extends StatelessWidget {
                 },
               ),
             ),
-            const Divider(height: 20, thickness: 1, indent: 20, endIndent: 20),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.map),
-                label: const Text('Manual Recording'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  textStyle: const TextStyle(fontSize: 18),
-                ),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Manual Recording not implemented yet.'))
-                  );
-                },
-              ),
-            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: ElevatedButton.icon(
@@ -325,6 +309,7 @@ class ChoiceScreen extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   textStyle: const TextStyle(fontSize: 18),
+                  backgroundColor: Colors.green,
                 ),
                 onPressed: () {
                   Navigator.push(
@@ -340,7 +325,6 @@ class ChoiceScreen extends StatelessWidget {
     );
   }
 }
-
 class NameTourScreen extends StatefulWidget {
   const NameTourScreen({super.key});
 
