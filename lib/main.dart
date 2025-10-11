@@ -572,6 +572,66 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
     }
   }
 
+  void _deleteWaypoint(int index) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Delete Waypoint'),
+          content: Text('Are you sure you want to delete "${_newWaypoints[index].name}"?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  _newWaypoints.removeAt(index);
+                });
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Waypoint deleted'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _editWaypoint(int index) async {
+    final editedPoint = await Navigator.push<TourPoint>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditWaypointScreen(
+          existingWaypoint: _newWaypoints[index],
+        ),
+      ),
+    );
+
+    if (editedPoint != null) {
+      setState(() {
+        _newWaypoints[index] = editedPoint;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Waypoint "${editedPoint.name}" updated'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -616,21 +676,44 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
                   itemCount: _newWaypoints.length,
                   itemBuilder: (context, index) {
                     final point = _newWaypoints[index];
-                    return ListTile(
-                      leading: CircleAvatar(child: Text('${index + 1}')),
-                      title: Text(point.name ?? 'Waypoint ${index + 1}'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Lat: ${point.latitude.toStringAsFixed(4)}, Lon: ${point.longitude.toStringAsFixed(4)}'),
-                          if (point.localAudioPath != null)
-                            Text(
-                              'Audio: ${point.localAudioPath!.split('/').last}',
-                              style: const TextStyle(fontSize: 12, color: Colors.green),
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.blue,
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        title: Text(point.name ?? 'Waypoint ${index + 1}'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Lat: ${point.latitude.toStringAsFixed(4)}, Lon: ${point.longitude.toStringAsFixed(4)}'),
+                            if (point.localAudioPath != null)
+                              Text(
+                                'Audio: ${point.localAudioPath!.split('/').last}',
+                                style: const TextStyle(fontSize: 12, color: Colors.green),
+                              ),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue),
+                              onPressed: () => _editWaypoint(index),
+                              tooltip: 'Edit Waypoint',
                             ),
-                        ],
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => _deleteWaypoint(index),
+                              tooltip: 'Delete Waypoint',
+                            ),
+                          ],
+                        ),
                       ),
-                      trailing: const Icon(Icons.mic, color: Colors.blue),
                     );
                   },
                 ),
@@ -661,9 +744,10 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
     );
   }
 }
-
 class EditWaypointScreen extends StatefulWidget {
-  const EditWaypointScreen({super.key});
+  final TourPoint? existingWaypoint;
+
+  const EditWaypointScreen({super.key, this.existingWaypoint});
 
   @override
   State<EditWaypointScreen> createState() => _EditWaypointScreenState();
@@ -678,10 +762,32 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
   bool _isRecorderReady = false;
   bool _isRecording = false;
   String? _recordedFilePath;
+  bool _isEditMode = false;
 
   @override
   void initState() {
     super.initState();
+    _isEditMode = widget.existingWaypoint != null;
+
+    if (_isEditMode) {
+      // Populate fields with existing waypoint data
+      _nameController.text = widget.existingWaypoint!.name ?? '';
+      _position = Position(
+        latitude: widget.existingWaypoint!.latitude,
+        longitude: widget.existingWaypoint!.longitude,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+      _recordedFilePath = widget.existingWaypoint!.localAudioPath;
+      _status = 'Editing waypoint. You can update the name or re-record audio.';
+    }
+
     _initialize();
   }
 
@@ -692,18 +798,21 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
     await _recorder.openRecorder();
     setState(() => _isRecorderReady = true);
 
-    try {
-      _position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      List<Placemark> placemarks = await placemarkFromCoordinates(_position!.latitude, _position!.longitude);
-      if (placemarks.isNotEmpty) {
-        final placemark = placemarks.first;
-        _nameController.text = "${placemark.street}, ${placemark.locality}";
-      } else {
-        _nameController.text = "Waypoint at ${_position!.latitude.toStringAsFixed(4)}";
+    // Only get new location if this is a new waypoint
+    if (!_isEditMode) {
+      try {
+        _position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        List<Placemark> placemarks = await placemarkFromCoordinates(_position!.latitude, _position!.longitude);
+        if (placemarks.isNotEmpty) {
+          final placemark = placemarks.first;
+          _nameController.text = "${placemark.street}, ${placemark.locality}";
+        } else {
+          _nameController.text = "Waypoint at ${_position!.latitude.toStringAsFixed(4)}";
+        }
+        setState(() => _status = 'Location found. Ready to record audio.');
+      } catch (e) {
+        setState(() => _status = 'Could not get location. Please try again.');
       }
-      setState(() => _status = 'Location found. Ready to record audio.');
-    } catch (e) {
-      setState(() => _status = 'Could not get location. Please try again.');
     }
   }
 
@@ -716,7 +825,9 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
       setState(() {
         _recordedFilePath = path;
         _isRecording = false;
-        _status = 'Audio recorded! Press Save.';
+        _status = _isEditMode
+            ? 'Audio re-recorded! Press Save to update.'
+            : 'Audio recorded! Press Save.';
       });
     } else {
       _recordedFilePath = null;
@@ -741,7 +852,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
     print('Saving waypoint with audio file: $_recordedFilePath');
 
     final newPoint = TourPoint(
-      id: 0,
+      id: widget.existingWaypoint?.id ?? 0,
       name: _nameController.text,
       latitude: _position!.latitude,
       longitude: _position!.longitude,
@@ -762,7 +873,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create New Waypoint'),
+        title: Text(_isEditMode ? 'Edit Waypoint' : 'Create New Waypoint'),
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
@@ -799,12 +910,13 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
               decoration: const InputDecoration(
                 labelText: 'Waypoint Name',
                 border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.label),
               ),
             ),
             const SizedBox(height: 30),
             ElevatedButton.icon(
               icon: Icon(_isRecording ? Icons.stop : Icons.mic),
-              label: Text(_isRecording ? 'Stop Recording' : 'Record Audio'),
+              label: Text(_isRecording ? 'Stop Recording' : (_isEditMode && _recordedFilePath != null ? 'Re-record Audio' : 'Record Audio')),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _isRecording ? Colors.red : Colors.green,
                 padding: const EdgeInsets.symmetric(vertical: 15),
@@ -814,12 +926,42 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
             if (_recordedFilePath != null && !_isRecording)
               Padding(
                 padding: const EdgeInsets.only(top: 10.0),
-                child: Text(
-                  'Audio saved: ${_recordedFilePath!.split('/').last}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.green[700]),
+                child: Column(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green[700], size: 32),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Audio saved: ${_recordedFilePath!.split('/').last}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
-              )
+              ),
+            if (_isEditMode)
+              Padding(
+                padding: const EdgeInsets.only(top: 20.0),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Edit mode: Location is locked. You can update the name and re-record audio.',
+                          style: TextStyle(color: Colors.blue[900], fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
