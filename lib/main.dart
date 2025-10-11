@@ -760,6 +760,7 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
     );
   }
 }
+
 class EditWaypointScreen extends StatefulWidget {
   final TourPoint? existingWaypoint;
 
@@ -771,6 +772,7 @@ class EditWaypointScreen extends StatefulWidget {
 
 class _EditWaypointScreenState extends State<EditWaypointScreen> {
   final _nameController = TextEditingController();
+  final _addressController = TextEditingController();
   final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
 
   String _status = 'Getting location...';
@@ -779,6 +781,8 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
   bool _isRecording = false;
   String? _recordedFilePath;
   bool _isEditMode = false;
+  bool _useAddress = false;
+  bool _isGeocodingAddress = false;
 
   @override
   void initState() {
@@ -814,8 +818,8 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
     await _recorder.openRecorder();
     setState(() => _isRecorderReady = true);
 
-    // Only get new location if this is a new waypoint
-    if (!_isEditMode) {
+    // Only get new location if this is a new waypoint and not using address mode
+    if (!_isEditMode && !_useAddress) {
       try {
         _position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
         List<Placemark> placemarks = await placemarkFromCoordinates(_position!.latitude, _position!.longitude);
@@ -827,8 +831,96 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
         }
         setState(() => _status = 'Location found. Ready to record audio.');
       } catch (e) {
-        setState(() => _status = 'Could not get location. Please try again.');
+        setState(() => _status = 'Could not get location. Try using address instead.');
       }
+    }
+  }
+
+  Future<void> _geocodeAddress() async {
+    if (_addressController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter an address')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isGeocodingAddress = true;
+      _status = 'Looking up address...';
+    });
+
+    try {
+      List<Location> locations = await locationFromAddress(_addressController.text.trim());
+
+      if (locations.isEmpty) {
+        setState(() {
+          _status = 'Address not found. Please try a different address.';
+          _isGeocodingAddress = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Address not found. Please try again.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Use the first result
+      final location = locations.first;
+
+      // Get the formatted address back from coordinates
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        location.latitude,
+        location.longitude,
+      );
+
+      String formattedAddress = _addressController.text.trim();
+      if (placemarks.isNotEmpty) {
+        final placemark = placemarks.first;
+        formattedAddress = [
+          placemark.street,
+          placemark.locality,
+          placemark.administrativeArea,
+          placemark.country,
+        ].where((e) => e != null && e.isNotEmpty).join(', ');
+      }
+
+      setState(() {
+        _position = Position(
+          latitude: location.latitude,
+          longitude: location.longitude,
+          timestamp: DateTime.now(),
+          accuracy: 0,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+        _nameController.text = formattedAddress;
+        _status = 'Address verified! Location found.';
+        _isGeocodingAddress = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Address verified: $formattedAddress'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      setState(() {
+        _status = 'Error looking up address. Please try again.';
+        _isGeocodingAddress = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: Could not find address. $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -882,6 +974,7 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
   void dispose() {
     _recorder.closeRecorder();
     _nameController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
@@ -903,6 +996,107 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Location method toggle (only for new waypoints)
+            if (!_isEditMode)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Choose location method:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: Icon(_useAddress ? Icons.radio_button_off : Icons.radio_button_checked),
+                            label: const Text('Use GPS'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _useAddress ? Colors.grey.shade300 : Colors.blue,
+                              foregroundColor: _useAddress ? Colors.black : Colors.white,
+                            ),
+                            onPressed: () {
+                              if (_useAddress) {
+                                setState(() {
+                                  _useAddress = false;
+                                  _position = null;
+                                  _addressController.clear();
+                                  _status = 'Getting GPS location...';
+                                });
+                                _initialize();
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: Icon(_useAddress ? Icons.radio_button_checked : Icons.radio_button_off),
+                            label: const Text('Use Address'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _useAddress ? Colors.blue : Colors.grey.shade300,
+                              foregroundColor: _useAddress ? Colors.white : Colors.black,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _useAddress = true;
+                                _position = null;
+                                _status = 'Enter an address below';
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 16),
+
+            // Address input (only shown when using address mode)
+            if (_useAddress && !_isEditMode)
+              Column(
+                children: [
+                  TextField(
+                    controller: _addressController,
+                    decoration: const InputDecoration(
+                      labelText: 'Enter Address',
+                      hintText: 'e.g., 1600 Amphitheatre Parkway, Mountain View, CA',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.location_on),
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    icon: _isGeocodingAddress
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.search),
+                    label: Text(_isGeocodingAddress ? 'Verifying...' : 'Verify Address'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: _isGeocodingAddress ? null : _geocodeAddress,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+
+            // Status box
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -912,7 +1106,18 @@ class _EditWaypointScreenState extends State<EditWaypointScreen> {
                   color: _position != null ? Colors.green : Colors.orange,
                 ),
               ),
-              child: Text(_status, style: const TextStyle(fontSize: 14)),
+              child: Row(
+                children: [
+                  Icon(
+                    _position != null ? Icons.check_circle : Icons.info_outline,
+                    color: _position != null ? Colors.green : Colors.orange,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_status, style: const TextStyle(fontSize: 14)),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 10),
             if (_position != null)
