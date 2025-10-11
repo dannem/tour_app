@@ -27,6 +27,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   int _searchRadiusMeters = 500;
   Position? _currentPosition;
   final Set<int> _playedArticleIds = {};
+  final Set<int> _disabledArticleIds = {}; // Articles user has disabled
+  bool _showListView = false; // Toggle between map and list view
 
   @override
   void initState() {
@@ -112,6 +114,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     _markers = _nearbyArticles.map((article) {
       final isPlayed = _playedArticleIds.contains(article.pageId);
       final isCurrent = _currentArticle?.pageId == article.pageId;
+      final isDisabled = _disabledArticleIds.contains(article.pageId);
 
       return Marker(
         markerId: MarkerId(article.pageId.toString()),
@@ -124,6 +127,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         ),
         icon: isCurrent
             ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
+            : isDisabled
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGrey)
             : isPlayed
                 ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)
                 : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
@@ -134,8 +139,11 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
   void _checkProximityToArticles(Position position) {
     for (final article in _nearbyArticles) {
-      // Skip if already played
-      if (_playedArticleIds.contains(article.pageId)) continue;
+      // Skip if already played or disabled by user
+      if (_playedArticleIds.contains(article.pageId) ||
+          _disabledArticleIds.contains(article.pageId)) {
+        continue;
+      }
 
       final distance = Geolocator.distanceBetween(
         position.latitude,
@@ -280,6 +288,15 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       appBar: AppBar(
         title: const Text('Wikipedia Tour'),
         actions: [
+          IconButton(
+            icon: Icon(_showListView ? Icons.map : Icons.list),
+            onPressed: () {
+              setState(() {
+                _showListView = !_showListView;
+              });
+            },
+            tooltip: _showListView ? 'Show Map' : 'Show List',
+          ),
           PopupMenuButton<int>(
             icon: const Icon(Icons.tune),
             onSelected: (value) {
@@ -311,7 +328,12 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
           ),
         ],
       ),
-      body: Stack(
+      body: _showListView ? _buildListView() : _buildMapView(),
+    );
+  }
+
+  Widget _buildMapView() {
+    return Stack(
         children: [
           GoogleMap(
             onMapCreated: (controller) => _mapController.complete(controller),
@@ -350,9 +372,18 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                       ],
                     ),
                     if (_nearbyArticles.isNotEmpty)
-                      Text(
-                        'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      Column(
+                        children: [
+                          Text(
+                            'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                          if (_disabledArticleIds.isNotEmpty)
+                            Text(
+                              '${_disabledArticleIds.length} disabled',
+                              style: const TextStyle(fontSize: 11, color: Colors.orange),
+                            ),
+                        ],
                       ),
                   ],
                 ),
@@ -403,7 +434,239 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
               ),
             ),
         ],
-      ),
+      );
+  }
+
+  Widget _buildListView() {
+    // Sort articles by distance from current position
+    final sortedArticles = List<WikipediaArticle>.from(_nearbyArticles);
+    if (_currentPosition != null) {
+      sortedArticles.sort((a, b) {
+        final distA = Geolocator.distanceBetween(
+          _currentPosition!.latitude,
+          _currentPosition!.longitude,
+          a.latitude,
+          b.longitude,
+        );
+        final distB = Geolocator.distanceBetween(
+          _currentPosition!.latitude,
+          _currentPosition!.longitude,
+          b.latitude,
+          b.longitude,
+        );
+        return distA.compareTo(distB);
+      });
+    }
+
+    return Column(
+      children: [
+        // Status card at top
+        Card(
+          margin: const EdgeInsets.all(16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _isPlaying ? Icons.volume_up : Icons.list,
+                      color: _isPlaying ? Colors.green : Colors.blue,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _statusMessage,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${_nearbyArticles.length - _disabledArticleIds.length} of ${_nearbyArticles.length} articles enabled',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                if (_disabledArticleIds.isNotEmpty)
+                  TextButton.icon(
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Enable All'),
+                    onPressed: () {
+                      setState(() {
+                        _disabledArticleIds.clear();
+                        _updateMarkers();
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('All articles enabled'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ),
+        // List of articles
+        Expanded(
+          child: sortedArticles.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.search_off, size: 64, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text('No articles found nearby'),
+                      Text(
+                        'Try increasing the search radius',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: sortedArticles.length,
+                  itemBuilder: (context, index) {
+                    final article = sortedArticles[index];
+                    final isDisabled = _disabledArticleIds.contains(article.pageId);
+                    final isPlayed = _playedArticleIds.contains(article.pageId);
+                    final isCurrent = _currentArticle?.pageId == article.pageId;
+
+                    double? distance;
+                    if (_currentPosition != null) {
+                      distance = Geolocator.distanceBetween(
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
+                        article.latitude,
+                        article.longitude,
+                      );
+                    }
+
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      elevation: isCurrent ? 4 : 1,
+                      color: isCurrent
+                          ? Colors.green.shade50
+                          : isDisabled
+                              ? Colors.grey.shade100
+                              : null,
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isCurrent
+                              ? Colors.green
+                              : isDisabled
+                                  ? Colors.grey
+                                  : isPlayed
+                                      ? Colors.purple
+                                      : Colors.red,
+                          child: Icon(
+                            isDisabled
+                                ? Icons.block
+                                : isPlayed
+                                    ? Icons.check
+                                    : Icons.location_on,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        title: Text(
+                          article.title,
+                          style: TextStyle(
+                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                            decoration: isDisabled ? TextDecoration.lineThrough : null,
+                            color: isDisabled ? Colors.grey : null,
+                          ),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (distance != null)
+                              Text(
+                                distance < 1000
+                                    ? '${distance.toStringAsFixed(0)}m away'
+                                    : '${(distance / 1000).toStringAsFixed(1)}km away',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: distance < 50 ? Colors.orange : Colors.grey,
+                                  fontWeight: distance < 50 ? FontWeight.bold : FontWeight.normal,
+                                ),
+                              ),
+                            if (isPlayed)
+                              const Text(
+                                'Already played',
+                                style: TextStyle(fontSize: 11, color: Colors.purple),
+                              ),
+                            if (isDisabled)
+                              const Text(
+                                'Disabled - will not auto-play',
+                                style: TextStyle(fontSize: 11, color: Colors.orange),
+                              ),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Toggle enable/disable
+                            IconButton(
+                              icon: Icon(
+                                isDisabled ? Icons.visibility_off : Icons.visibility,
+                                color: isDisabled ? Colors.grey : Colors.blue,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  if (isDisabled) {
+                                    _disabledArticleIds.remove(article.pageId);
+                                  } else {
+                                    _disabledArticleIds.add(article.pageId);
+                                    // Stop if currently playing
+                                    if (isCurrent) {
+                                      _stopPlayback();
+                                    }
+                                  }
+                                  _updateMarkers();
+                                });
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isDisabled
+                                          ? '"${article.title}" enabled'
+                                          : '"${article.title}" disabled',
+                                    ),
+                                    duration: const Duration(seconds: 1),
+                                  ),
+                                );
+                              },
+                              tooltip: isDisabled ? 'Enable' : 'Disable',
+                            ),
+                            // Play button
+                            IconButton(
+                              icon: Icon(
+                                isCurrent && _isPlaying ? Icons.stop : Icons.play_arrow,
+                                color: isDisabled ? Colors.grey : Colors.green,
+                              ),
+                              onPressed: isDisabled
+                                  ? null
+                                  : () {
+                                      if (isCurrent && _isPlaying) {
+                                        _stopPlayback();
+                                      } else {
+                                        _playArticle(article);
+                                      }
+                                    },
+                              tooltip: isCurrent && _isPlaying ? 'Stop' : 'Play',
+                            ),
+                          ],
+                        ),
+                        onTap: () => _showArticlePreview(article),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 
