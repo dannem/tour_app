@@ -44,6 +44,7 @@ dependencies:
   flutter_keyboard_visibility: ^6.0.0 # Force the correct version
   google_maps_apis: ^1.1.1 # This may need to be updated depending on google_maps_flutter
   just_audio: ^0.9.37
+  flutter_tts: ^4.2.0  # Add this line
 
   # No changes needed for this one
   cupertino_icons: ^1.0.8

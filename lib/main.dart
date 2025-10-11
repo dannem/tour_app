@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'wikipedia_playback_screen.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -268,7 +269,6 @@ class TourApp extends StatelessWidget {
 
 // --- Main Screens ---
 
-
 class ChoiceScreen extends StatelessWidget {
   const ChoiceScreen({super.key});
 
@@ -283,15 +283,37 @@ class ChoiceScreen extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Text(
+                'Choose Your Experience',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Play Tour'),
+                icon: const Icon(Icons.play_arrow, size: 28),
+                label: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Play Custom Tour', style: TextStyle(fontSize: 18)),
+                    SizedBox(height: 4),
+                    Text(
+                      'Play a pre-recorded audio tour',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                    ),
+                  ],
+                ),
                 style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  textStyle: const TextStyle(fontSize: 18),
+                  padding: const EdgeInsets.all(20),
                   backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  alignment: Alignment.centerLeft,
                 ),
                 onPressed: () {
                   Navigator.push(
@@ -302,14 +324,56 @@ class ChoiceScreen extends StatelessWidget {
               ),
             ),
             Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.public, size: 28),
+                label: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Wikipedia Tour', style: TextStyle(fontSize: 18)),
+                    SizedBox(height: 4),
+                    Text(
+                      'Hear about nearby places from Wikipedia',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                    ),
+                  ],
+                ),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.all(20),
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                  alignment: Alignment.centerLeft,
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const WikipediaPlaybackScreen(),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.location_on),
-                label: const Text('Record a New Tour'),
+                icon: const Icon(Icons.mic, size: 28),
+                label: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Record New Tour', style: TextStyle(fontSize: 18)),
+                    SizedBox(height: 4),
+                    Text(
+                      'Create your own audio tour',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                    ),
+                  ],
+                ),
                 style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  textStyle: const TextStyle(fontSize: 18),
+                  padding: const EdgeInsets.all(20),
                   backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  alignment: Alignment.centerLeft,
                 ),
                 onPressed: () {
                   Navigator.push(

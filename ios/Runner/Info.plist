@@ -11,6 +11,8 @@
 	<string>This app needs access to your location to save GPS coordinates for tour points.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>This app needs access to your location to play tour points as you approach them.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>We need access to text-to-speech for Wikipedia articles</string>
 
 
 	<key>NSLocationWhenInUseUsageDescription</key>
