@@ -437,7 +437,9 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
       return;
     }
 
-    final descriptionController = TextEditingController();
+    final descriptionController = TextEditingController(
+      text: 'A tour recorded on ${DateFormat.yMMMd().format(DateTime.now())}'
+    );
 
     showDialog(
       context: context,
@@ -445,18 +447,31 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
       builder: (context) {
         return AlertDialog(
           title: const Text('Add Description & Save'),
-          content: TextField(
-            controller: descriptionController,
-            decoration: const InputDecoration(
-              labelText: 'Tour Description',
-              hintText: 'Enter a description for your tour'
-            ),
-            maxLines: 3,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Tour Name: ${widget.tourName}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: descriptionController,
+                decoration: const InputDecoration(
+                  labelText: 'Tour Description',
+                  hintText: 'Enter a description for your tour',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+            ],
           ),
           actions: [
             TextButton(
               onPressed: () {
                 print('Save dialog cancelled');
+                descriptionController.dispose();
                 Navigator.pop(context);
               },
               child: const Text('Cancel'),
@@ -468,6 +483,7 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
                     ? 'No description provided'
                     : descriptionController.text;
                 print('Description: $desc');
+                descriptionController.dispose();
                 Navigator.pop(context);
                 _uploadTour(desc);
               },
