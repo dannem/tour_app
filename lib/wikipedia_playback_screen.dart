@@ -128,7 +128,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         icon: isCurrent
             ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
             : isDisabled
-                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGrey)
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow)
             : isPlayed
                 ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)
                 : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
