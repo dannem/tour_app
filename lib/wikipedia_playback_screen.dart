@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:path_provider/path_provider.dart';
 import 'wikipedia_service.dart';
+import 'main.dart'; // For ApiService and Tour
 
 class WikipediaPlaybackScreen extends StatefulWidget {
   const WikipediaPlaybackScreen({super.key});
@@ -401,6 +404,367 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     super.dispose();
   }
 
+  void _saveAsCustomTour() async {
+    if (_nearbyArticles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No articles to save. Search for nearby places first.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Filter out disabled articles
+    final articlesToSave = _nearbyArticles
+        .where((article) => !_disabledArticleIds.contains(article.pageId))
+        .toList();
+
+    if (articlesToSave.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All articles are disabled. Enable some articles first.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Show dialog to get tour name and description
+    final nameController = TextEditingController(
+      text: 'Wikipedia Tour - ${_currentLanguage.nativeName}',
+    );
+    final descController = TextEditingController(
+      text: 'Wikipedia articles in ${_currentLanguage.nativeName} near ${_currentPosition?.latitude.toStringAsFixed(4)}, ${_currentPosition?.longitude.toStringAsFixed(4)}',
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save Wikipedia Tour'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This will save ${articlesToSave.length} article${articlesToSave.length != 1 ? 's' : ''} as a custom tour.',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Tour Name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descController,
+                decoration: const InputDecoration(
+                  labelText: 'Description',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                        SizedBox(width: 4),
+                        Text(
+                          'How it works:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      '• Text-to-speech will be used for audio\n'
+                      '• Articles are saved in order of distance\n'
+                      '• You can play this tour later from the main menu',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              nameController.dispose();
+              descController.dispose();
+              Navigator.pop(context, false);
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context, true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Save Tour'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      nameController.dispose();
+      descController.dispose();
+      return;
+    }
+
+    final tourName = nameController.text;
+    final tourDesc = descController.text;
+    nameController.dispose();
+    descController.dispose();
+
+    // Show loading dialog with progress
+    if (!mounted) return;
+
+    int currentStep = 0;
+    int totalSteps = articlesToSave.length + 1; // +1 for creating tour
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Saving Wikipedia Tour'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Step $currentStep of $totalSteps',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                currentStep == 0
+                    ? 'Creating tour on server...'
+                    : currentStep <= articlesToSave.length
+                        ? 'Generating audio ${currentStep}/${articlesToSave.length}...'
+                        : 'Complete!',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).then((_) {
+      // Dialog dismissed callback
+    });
+
+    try {
+      // Sort articles by distance
+      if (_currentPosition != null) {
+        articlesToSave.sort((a, b) {
+          final distA = Geolocator.distanceBetween(
+            _currentPosition!.latitude,
+            _currentPosition!.longitude,
+            a.latitude,
+            a.longitude,
+          );
+          final distB = Geolocator.distanceBetween(
+            _currentPosition!.latitude,
+            _currentPosition!.longitude,
+            b.latitude,
+            b.longitude,
+          );
+          return distA.compareTo(distB);
+        });
+      }
+
+      print('Creating tour: $tourName');
+
+      // Create the tour - with retry logic for server wake-up
+      final apiService = ApiService();
+      Tour? newTour;
+      int retries = 3;
+
+      while (retries > 0 && newTour == null) {
+        try {
+          newTour = await apiService.createTour(tourName, tourDesc)
+              .timeout(const Duration(seconds: 60));
+          currentStep = 1;
+          break;
+        } catch (e) {
+          print('Attempt ${4 - retries} failed: $e');
+          retries--;
+          if (retries > 0) {
+            print('Retrying... ($retries attempts left)');
+            await Future.delayed(const Duration(seconds: 3));
+          } else {
+            rethrow;
+          }
+        }
+      }
+
+      if (newTour == null) {
+        throw Exception('Failed to create tour after multiple attempts');
+      }
+
+      print('Tour created with ID: ${newTour.id}');
+
+      // For each article, create a waypoint with TTS audio
+      for (int i = 0; i < articlesToSave.length; i++) {
+        final article = articlesToSave[i];
+        print('Processing article ${i + 1}/${articlesToSave.length}: ${article.title}');
+
+        // Update progress
+        currentStep = i + 2;
+
+        try {
+          // Generate TTS audio file
+          final audioPath = await _generateTtsAudio(article, i);
+
+          if (audioPath != null) {
+            print('Audio generated: $audioPath');
+
+            // Verify file exists
+            final file = File(audioPath);
+            if (!await file.exists()) {
+              print('Warning: Audio file not found at $audioPath');
+              continue;
+            }
+
+            await apiService.createWaypoint(
+              tourId: newTour.id,
+              name: article.title,
+              latitude: article.latitude,
+              longitude: article.longitude,
+              audioFilePath: audioPath,
+            );
+
+            print('Waypoint created successfully');
+          } else {
+            print('Warning: Could not generate audio for ${article.title}');
+          }
+        } catch (e) {
+          print('Error creating waypoint for ${article.title}: $e');
+          // Continue with next article instead of failing completely
+        }
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Tour "$tourName" saved with ${articlesToSave.length} waypoints!'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'View Tours',
+            textColor: Colors.white,
+            onPressed: () {
+              Navigator.pop(context); // Go back to main menu
+            },
+          ),
+        ),
+      );
+    } catch (e, stackTrace) {
+      print('Error saving tour: $e');
+      print('Stack trace: $stackTrace');
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      String errorMessage = 'Failed to save tour: $e';
+      if (e.toString().contains('Connection closed') ||
+          e.toString().contains('TimeoutException')) {
+        errorMessage = 'Server connection timeout. The server may be starting up. Please try again in a minute.';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              _saveAsCustomTour();
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<String?> _generateTtsAudio(WikipediaArticle article, int index) async {
+    try {
+      // Get full article text if extract is too short
+      String textToRead = article.extract;
+      if (textToRead.length < 200) {
+        try {
+          final fullText = await _wikiService.getFullArticle(article.pageId);
+          if (fullText.isNotEmpty) {
+            textToRead = fullText;
+          }
+        } catch (e) {
+          print('Could not fetch full article, using extract: $e');
+        }
+      }
+
+      // Limit text length to avoid very long audio files
+      if (textToRead.length > 1000) {
+        textToRead = '${textToRead.substring(0, 1000)}...';
+      }
+
+      // Create introduction
+      final introduction = 'Now approaching ${article.title}. $textToRead';
+
+      // Generate audio file using TTS with proper path
+      final directory = await getApplicationDocumentsDirectory();
+      final fileName = 'wiki_tts_${DateTime.now().millisecondsSinceEpoch}_$index.wav';
+      final filePath = '${directory.path}/$fileName';
+
+      print('Generating TTS audio to: $filePath');
+
+      final result = await _tts.synthesizeToFile(introduction, filePath);
+
+      if (result == 1) {
+        print('TTS synthesis successful');
+        // Verify file was created
+        final file = File(filePath);
+        if (await file.exists()) {
+          final size = await file.length();
+          print('Audio file created: $filePath (${size} bytes)');
+          return filePath;
+        } else {
+          print('TTS synthesis returned success but file not found');
+          return null;
+        }
+      } else {
+        print('TTS synthesis failed with result: $result');
+        return null;
+      }
+    } catch (e) {
+      print('Error generating TTS audio for ${article.title}: $e');
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -423,6 +787,12 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
           ],
         ),
         actions: [
+          if (_nearbyArticles.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _saveAsCustomTour,
+              tooltip: 'Save as Tour',
+            ),
           IconButton(
             icon: const Icon(Icons.language),
             onPressed: _showLanguageSelector,
