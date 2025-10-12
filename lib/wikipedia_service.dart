@@ -30,8 +30,58 @@ class WikipediaArticle {
   }
 }
 
+class WikipediaLanguage {
+  final String code;
+  final String name;
+  final String nativeName;
+
+  const WikipediaLanguage({
+    required this.code,
+    required this.name,
+    required this.nativeName,
+  });
+
+  static const List<WikipediaLanguage> languages = [
+    WikipediaLanguage(code: 'en', name: 'English', nativeName: 'English'),
+    WikipediaLanguage(code: 'es', name: 'Spanish', nativeName: 'Español'),
+    WikipediaLanguage(code: 'fr', name: 'French', nativeName: 'Français'),
+    WikipediaLanguage(code: 'de', name: 'German', nativeName: 'Deutsch'),
+    WikipediaLanguage(code: 'it', name: 'Italian', nativeName: 'Italiano'),
+    WikipediaLanguage(code: 'pt', name: 'Portuguese', nativeName: 'Português'),
+    WikipediaLanguage(code: 'ru', name: 'Russian', nativeName: 'Русский'),
+    WikipediaLanguage(code: 'ja', name: 'Japanese', nativeName: '日本語'),
+    WikipediaLanguage(code: 'zh', name: 'Chinese', nativeName: '中文'),
+    WikipediaLanguage(code: 'ar', name: 'Arabic', nativeName: 'العربية'),
+    WikipediaLanguage(code: 'hi', name: 'Hindi', nativeName: 'हिन्दी'),
+    WikipediaLanguage(code: 'ko', name: 'Korean', nativeName: '한국어'),
+    WikipediaLanguage(code: 'nl', name: 'Dutch', nativeName: 'Nederlands'),
+    WikipediaLanguage(code: 'pl', name: 'Polish', nativeName: 'Polski'),
+    WikipediaLanguage(code: 'tr', name: 'Turkish', nativeName: 'Türkçe'),
+    WikipediaLanguage(code: 'sv', name: 'Swedish', nativeName: 'Svenska'),
+    WikipediaLanguage(code: 'no', name: 'Norwegian', nativeName: 'Norsk'),
+    WikipediaLanguage(code: 'da', name: 'Danish', nativeName: 'Dansk'),
+    WikipediaLanguage(code: 'fi', name: 'Finnish', nativeName: 'Suomi'),
+    WikipediaLanguage(code: 'he', name: 'Hebrew', nativeName: 'עברית'),
+  ];
+
+  static WikipediaLanguage findByCode(String code) {
+    return languages.firstWhere(
+      (lang) => lang.code == code,
+      orElse: () => languages[0], // Default to English
+    );
+  }
+}
+
 class WikipediaService {
-  static const String _baseUrl = 'https://en.wikipedia.org/w/api.php';
+  String _languageCode = 'en';
+
+  void setLanguage(String languageCode) {
+    _languageCode = languageCode;
+  }
+
+  String get currentLanguage => _languageCode;
+
+  String get _baseUrl => 'https://$_languageCode.wikipedia.org/w/api.php';
 
   /// Search for Wikipedia articles near a geographic location
   Future<List<WikipediaArticle>> searchNearby({
