@@ -27,8 +27,9 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   int _searchRadiusMeters = 500;
   Position? _currentPosition;
   final Set<int> _playedArticleIds = {};
-  final Set<int> _disabledArticleIds = {}; // Articles user has disabled
-  bool _showListView = false; // Toggle between map and list view
+  final Set<int> _disabledArticleIds = {};
+  bool _showListView = false;
+  WikipediaLanguage _currentLanguage = WikipediaLanguage.languages[0]; // Default to English
 
   @override
   void initState() {
@@ -38,7 +39,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   }
 
   Future<void> _initializeTts() async {
-    await _tts.setLanguage("en-US");
+    await _tts.setLanguage(_getTtsLanguageCode());
     await _tts.setSpeechRate(0.5);
     await _tts.setVolume(1.0);
     await _tts.setPitch(1.0);
@@ -60,6 +61,129 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     });
   }
 
+  String _getTtsLanguageCode() {
+    // Map Wikipedia language codes to TTS language codes
+    final ttsMap = {
+      'en': 'en-US',
+      'es': 'es-ES',
+      'fr': 'fr-FR',
+      'de': 'de-DE',
+      'it': 'it-IT',
+      'pt': 'pt-PT',
+      'ru': 'ru-RU',
+      'ja': 'ja-JP',
+      'zh': 'zh-CN',
+      'ar': 'ar-SA',
+      'hi': 'hi-IN',
+      'ko': 'ko-KR',
+      'nl': 'nl-NL',
+      'pl': 'pl-PL',
+      'tr': 'tr-TR',
+      'sv': 'sv-SE',
+      'no': 'no-NO',
+      'da': 'da-DK',
+      'fi': 'fi-FI',
+      'he': 'he-IL',
+    };
+    return ttsMap[_currentLanguage.code] ?? 'en-US';
+  }
+
+  Future<void> _changeLanguage(WikipediaLanguage newLanguage) async {
+    // Stop any current playback
+    if (_isPlaying) {
+      await _stopPlayback();
+    }
+
+    setState(() {
+      _currentLanguage = newLanguage;
+      _nearbyArticles.clear();
+      _playedArticleIds.clear();
+      _disabledArticleIds.clear();
+      _markers = {};
+      _statusMessage = 'Switching to ${newLanguage.nativeName}...';
+    });
+
+    // Update Wikipedia service language
+    _wikiService.setLanguage(newLanguage.code);
+
+    // Update TTS language
+    await _tts.setLanguage(_getTtsLanguageCode());
+
+    // Refresh articles in new language
+    if (_currentPosition != null) {
+      await _searchNearbyArticles(_currentPosition!);
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Language changed to ${newLanguage.nativeName}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _showLanguageSelector() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Select Language',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Divider(),
+            Expanded(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: WikipediaLanguage.languages.length,
+                itemBuilder: (context, index) {
+                  final language = WikipediaLanguage.languages[index];
+                  final isSelected = language.code == _currentLanguage.code;
+
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: isSelected ? Colors.blue : Colors.grey.shade300,
+                      child: Text(
+                        language.code.toUpperCase(),
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.black,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      language.nativeName,
+                      style: TextStyle(
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    subtitle: Text(language.name),
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle, color: Colors.blue)
+                        : null,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _changeLanguage(language);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _startLocationListener() async {
     await _determinePosition();
 
@@ -73,16 +197,13 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         _currentPosition = position;
       });
 
-      // Update camera to follow user
       final controller = await _mapController.future;
       controller.animateCamera(
         CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
       );
 
-      // Search for nearby Wikipedia articles
       await _searchNearbyArticles(position);
 
-      // Check if user is near any article
       if (!_isPlaying) {
         _checkProximityToArticles(position);
       }
@@ -103,6 +224,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         _updateMarkers();
         if (!_isPlaying && articles.isNotEmpty) {
           _statusMessage = 'Found ${articles.length} nearby places';
+        } else if (articles.isEmpty) {
+          _statusMessage = 'No articles found in ${_currentLanguage.nativeName}. Try another language or increase radius.';
         }
       });
     } catch (e) {
@@ -139,7 +262,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
   void _checkProximityToArticles(Position position) {
     for (final article in _nearbyArticles) {
-      // Skip if already played or disabled by user
       if (_playedArticleIds.contains(article.pageId) ||
           _disabledArticleIds.contains(article.pageId)) {
         continue;
@@ -152,7 +274,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         article.longitude,
       );
 
-      // Trigger when within 50 meters
       if (distance < 50) {
         _playArticle(article);
         break;
@@ -170,20 +291,18 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       _updateMarkers();
     });
 
-    // Get full article if extract is too short
     String textToRead = article.extract;
     if (textToRead.length < 200) {
       textToRead = await _wikiService.getFullArticle(article.pageId);
     }
 
-    // Add introduction
     final introduction = 'Now approaching ${article.title}. ${textToRead}';
     await _tts.speak(introduction);
   }
 
   Future<void> _pauseResume() async {
     if (_isPaused) {
-      await _tts.speak(''); // Resume
+      await _tts.speak('');
       setState(() {
         _isPaused = false;
       });
@@ -286,8 +405,29 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Wikipedia Tour'),
+        title: Row(
+          children: [
+            const Text('Wikipedia Tour'),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _currentLanguage.code.toUpperCase(),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.language),
+            onPressed: _showLanguageSelector,
+            tooltip: 'Change Language',
+          ),
           IconButton(
             icon: Icon(_showListView ? Icons.map : Icons.list),
             onPressed: () {
@@ -378,11 +518,20 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                             'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
                             style: const TextStyle(fontSize: 12, color: Colors.grey),
                           ),
-                          if (_disabledArticleIds.isNotEmpty)
-                            Text(
-                              '${_disabledArticleIds.length} disabled',
-                              style: const TextStyle(fontSize: 11, color: Colors.orange),
-                            ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Language: ${_currentLanguage.nativeName}',
+                                style: const TextStyle(fontSize: 11, color: Colors.blue),
+                              ),
+                              if (_disabledArticleIds.isNotEmpty)
+                                Text(
+                                  ' • ${_disabledArticleIds.length} disabled',
+                                  style: const TextStyle(fontSize: 11, color: Colors.orange),
+                                ),
+                            ],
+                          ),
                         ],
                       ),
                   ],
@@ -438,7 +587,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   }
 
   Widget _buildListView() {
-    // Sort articles by distance from current position
     final sortedArticles = List<WikipediaArticle>.from(_nearbyArticles);
     if (_currentPosition != null) {
       sortedArticles.sort((a, b) {
@@ -446,7 +594,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
           _currentPosition!.latitude,
           _currentPosition!.longitude,
           a.latitude,
-          b.longitude,
+          a.longitude,
         );
         final distB = Geolocator.distanceBetween(
           _currentPosition!.latitude,
@@ -460,7 +608,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
     return Column(
       children: [
-        // Status card at top
         Card(
           margin: const EdgeInsets.all(16),
           child: Padding(
@@ -484,9 +631,19 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  '${_nearbyArticles.length - _disabledArticleIds.length} of ${_nearbyArticles.length} articles enabled',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '${_nearbyArticles.length - _disabledArticleIds.length} of ${_nearbyArticles.length} articles enabled',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.language, size: 16),
+                      label: Text(_currentLanguage.nativeName),
+                      onPressed: _showLanguageSelector,
+                    ),
+                  ],
                 ),
                 if (_disabledArticleIds.isNotEmpty)
                   TextButton.icon(
@@ -509,18 +666,24 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
             ),
           ),
         ),
-        // List of articles
         Expanded(
           child: sortedArticles.isEmpty
-              ? const Center(
+              ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.search_off, size: 64, color: Colors.grey),
-                      SizedBox(height: 16),
-                      Text('No articles found nearby'),
-                      Text(
-                        'Try increasing the search radius',
+                      const Icon(Icons.search_off, size: 64, color: Colors.grey),
+                      const SizedBox(height: 16),
+                      Text('No articles found in ${_currentLanguage.nativeName}'),
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.language),
+                        label: const Text('Try Another Language'),
+                        onPressed: _showLanguageSelector,
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'or increase the search radius',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ],
@@ -608,7 +771,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            // Toggle enable/disable
                             IconButton(
                               icon: Icon(
                                 isDisabled ? Icons.visibility_off : Icons.visibility,
@@ -620,7 +782,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                                     _disabledArticleIds.remove(article.pageId);
                                   } else {
                                     _disabledArticleIds.add(article.pageId);
-                                    // Stop if currently playing
                                     if (isCurrent) {
                                       _stopPlayback();
                                     }
@@ -641,7 +802,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                               },
                               tooltip: isDisabled ? 'Enable' : 'Disable',
                             ),
-                            // Play button
                             IconButton(
                               icon: Icon(
                                 isCurrent && _isPlaying ? Icons.stop : Icons.play_arrow,
