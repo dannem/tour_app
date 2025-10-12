@@ -222,6 +222,56 @@ class ApiService {
       rethrow;
     }
   }
+
+  Future<void> createWaypointWithTTS({
+    required int tourId,
+    required String name,
+    required double latitude,
+    required double longitude,
+    required String text,
+    String language = 'en-US',
+  }) async {
+    try {
+      print('Creating TTS waypoint for tour $tourId');
+      print('Name: $name');
+      print('Location: $latitude, $longitude');
+      print('Text length: ${text.length} characters');
+
+      final baseUrl = serverBaseUrl.endsWith('/')
+          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+          : serverBaseUrl;
+      final url = '$baseUrl/tours/$tourId/waypoints/tts';
+
+      print('POST URL: $url');
+
+      var request = http.MultipartRequest('POST', Uri.parse(url));
+
+      request.fields['name'] = name;
+      request.fields['latitude'] = latitude.toString();
+      request.fields['longitude'] = longitude.toString();
+      request.fields['text'] = text;
+      request.fields['language'] = language;
+
+      print('Sending request to server...');
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception(
+          'Failed to create TTS waypoint. Status: ${response.statusCode}, Body: ${response.body}'
+        );
+      }
+
+      print('✅ TTS Waypoint created successfully');
+    } catch (e) {
+      print('❌ Error in createWaypointWithTTS: $e');
+      rethrow;
+    }
+  }
+
   Future<void> deleteTour(int tourId) async {
     try {
       print('Deleting tour: $tourId');
@@ -2153,6 +2203,22 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
       });
       return;
     }
+
+    // Actually get the current position
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      print('Current position obtained: ${position.latitude}, ${position.longitude}');
+      setState(() {
+        _statusMessage = 'Location found! Ready to start tour.';
+      });
+    } catch (e) {
+      print('Error getting current position: $e');
+      setState(() {
+        _statusMessage = 'Error getting location: $e';
+      });
+    }
   }
 
   @override
@@ -2401,7 +2467,6 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
     );
   }
 }
-
 class MapScreen extends StatelessWidget {
   const MapScreen({super.key});
 
