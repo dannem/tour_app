@@ -1771,7 +1771,11 @@ class _TourListScreenState extends State<TourListScreen> {
   }
 }
 
-// Replace the TourPlaybackScreen class in your main.dart with this code
+enum PlaybackMode {
+  sequential, // Play in insertion order
+  proximity,  // Play when approaching (current behavior)
+}
+
 
 class TourPlaybackScreen extends StatefulWidget {
   final int tourId;
@@ -1793,6 +1797,11 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
   String _statusMessage = 'Loading tour...';
   bool _isAudioPlaying = false;
 
+  // New state variables for playback modes
+  PlaybackMode _playbackMode = PlaybackMode.sequential;
+  Set<int> _completedWaypoints = {};
+  bool _tourStarted = false;
+
   @override
   void initState() {
     super.initState();
@@ -1801,45 +1810,43 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
       if (state.processingState == ProcessingState.completed) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            _moveToNextWaypoint();
+            _handleAudioCompleted();
           }
         });
       }
     });
   }
 
-  void _moveToNextWaypoint() {
+  // Handle audio completion - marks waypoint as completed
+  void _handleAudioCompleted() {
     setState(() {
       _isAudioPlaying = false;
-      _currentPointIndex++;
-      if (_currentPointIndex >= (_tour?.points.length ?? 0)) {
-        _statusMessage = "Tour completed!";
-        _positionStreamSubscription?.cancel();
+      _completedWaypoints.add(_currentPointIndex);
+
+      if (_playbackMode == PlaybackMode.sequential) {
+        // In sequential mode, automatically move to next waypoint
+        _moveToNextWaypoint();
       } else {
-        _statusMessage = "Moving to waypoint ${_currentPointIndex + 1}. Walk to the next point.";
-        if (_tour != null) {
-          _goToPoint(_tour!.points[_currentPointIndex]);
-        }
+        // In proximity mode, wait for user to approach next waypoint
+        _statusMessage = "Waypoint completed! Approach another waypoint to continue.";
+        _updateMarkers();
       }
     });
   }
 
+  // Skip button handler - marks current waypoint as completed
   void _skipCurrentWaypoint() {
-    // Stop audio if playing
     if (_isAudioPlaying) {
       _audioPlayer.stop();
     }
 
-    // Show confirmation dialog
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Skip Waypoint'),
           content: Text(
-            _currentPointIndex < (_tour?.points.length ?? 0)
-                ? 'Skip waypoint ${_currentPointIndex + 1}?'
-                : 'Tour is already completed.',
+            'Skip waypoint ${_currentPointIndex + 1}?',
           ),
           actions: [
             TextButton(
@@ -1849,14 +1856,24 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _moveToNextWaypoint();
+                setState(() {
+                  _completedWaypoints.add(_currentPointIndex);
+                  _isAudioPlaying = false;
+                });
+
+                if (_playbackMode == PlaybackMode.sequential) {
+                  _moveToNextWaypoint();
+                } else {
+                  setState(() {
+                    _statusMessage = "Waypoint skipped. Approach another waypoint.";
+                    _updateMarkers();
+                  });
+                }
 
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(_currentPointIndex >= (_tour?.points.length ?? 0)
-                        ? 'Tour completed!'
-                        : 'Skipped to waypoint ${_currentPointIndex + 1}'),
-                    backgroundColor: Colors.blue,
+                    content: Text('Skipped waypoint ${_currentPointIndex + 1}'),
+                    backgroundColor: Colors.orange,
                   ),
                 );
               },
@@ -1872,32 +1889,226 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
     );
   }
 
+  // Move to next waypoint (Sequential mode)
+  void _moveToNextWaypoint() {
+    if (_tour == null) return;
+
+    setState(() {
+      _isAudioPlaying = false;
+      _currentPointIndex++;
+
+      if (_currentPointIndex >= _tour!.points.length) {
+        _statusMessage = "Tour completed! All ${_tour!.points.length} waypoints visited.";
+        _positionStreamSubscription?.cancel();
+        _updateMarkers();
+      } else {
+        _statusMessage = "Moving to waypoint ${_currentPointIndex + 1}/${_tour!.points.length}";
+        _goToPoint(_tour!.points[_currentPointIndex]);
+        _updateMarkers();
+      }
+    });
+  }
+
+  // Start the tour based on selected mode
+  void _startTour() {
+    setState(() {
+      _tourStarted = true;
+      _completedWaypoints.clear();
+      _currentPointIndex = 0;
+    });
+
+    if (_playbackMode == PlaybackMode.sequential) {
+      _startSequentialMode();
+    } else {
+      _startProximityMode();
+    }
+  }
+
+  // Sequential Mode: Play waypoints in insertion order
+  void _startSequentialMode() {
+    if (_tour == null || _tour!.points.isEmpty) return;
+
+    setState(() {
+      _statusMessage = "Sequential Mode: Approach waypoint 1/${_tour!.points.length}";
+    });
+
+    _goToPoint(_tour!.points[0]);
+    _updateMarkers();
+    _startLocationListener();
+  }
+
+  // Proximity Mode: Play any waypoint when approaching
+  void _startProximityMode() {
+    setState(() {
+      _statusMessage = "Proximity Mode: Approach any waypoint to start";
+    });
+
+    _updateMarkers();
+    _startLocationListener();
+  }
+
+  Future<void> _startLocationListener() async {
+    await _determinePosition();
+    _positionStreamSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      ),
+    ).listen((Position position) {
+      if (!mounted || _tour == null || !_tourStarted) {
+        return;
+      }
+
+      if (_playbackMode == PlaybackMode.sequential) {
+        _handleSequentialLocationUpdate(position);
+      } else {
+        _handleProximityLocationUpdate(position);
+      }
+    });
+  }
+
+  // Handle location updates in Sequential mode
+  void _handleSequentialLocationUpdate(Position position) {
+    if (_currentPointIndex >= _tour!.points.length || _isAudioPlaying) {
+      return;
+    }
+
+    final currentTargetPoint = _tour!.points[_currentPointIndex];
+    final distanceInMeters = Geolocator.distanceBetween(
+      position.latitude,
+      position.longitude,
+      currentTargetPoint.latitude,
+      currentTargetPoint.longitude,
+    );
+
+    setState(() {
+      if (!_isAudioPlaying) {
+        _statusMessage = "Waypoint ${_currentPointIndex + 1}/${_tour!.points.length}: ${distanceInMeters.toStringAsFixed(0)}m away";
+      }
+    });
+
+    // Trigger audio when within 25 meters
+    if (distanceInMeters < 25 && !_completedWaypoints.contains(_currentPointIndex)) {
+      _playAudioForPoint(currentTargetPoint, _currentPointIndex);
+    }
+  }
+
+  // Handle location updates in Proximity mode
+  void _handleProximityLocationUpdate(Position position) {
+    if (_isAudioPlaying || _tour == null) {
+      return;
+    }
+
+    // Find the nearest unplayed waypoint
+    int? nearestIndex;
+    double nearestDistance = double.infinity;
+
+    for (int i = 0; i < _tour!.points.length; i++) {
+      if (_completedWaypoints.contains(i)) continue;
+
+      final point = _tour!.points[i];
+      final distance = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        point.latitude,
+        point.longitude,
+      );
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = i;
+      }
+    }
+
+    if (nearestIndex != null) {
+      final point = _tour!.points[nearestIndex];
+      final waypointNumber = nearestIndex + 1;
+      setState(() {
+        _statusMessage = "Nearest: Waypoint $waypointNumber (${nearestDistance.toStringAsFixed(0)}m) - ${_completedWaypoints.length}/${_tour!.points.length} completed";
+      });
+
+      // Trigger audio when within 25 meters
+      if (nearestDistance < 25) {
+        _currentPointIndex = nearestIndex;
+        _playAudioForPoint(point, nearestIndex);
+      }
+    } else {
+      setState(() {
+        _statusMessage = "All waypoints completed! ${_completedWaypoints.length}/${_tour!.points.length}";
+      });
+    }
+  }
+
+  Future<void> _playAudioForPoint(TourPoint point, int index) async {
+    setState(() {
+      _isAudioPlaying = true;
+      _currentPointIndex = index;
+      _statusMessage = "Playing audio for waypoint ${index + 1}/${_tour!.points.length}";
+    });
+
+    try {
+      final audioUrl = '$serverBaseUrl/uploads/${point.audioFilePath}';
+      print('Playing audio from: $audioUrl');
+
+      await _audioPlayer.setUrl(audioUrl);
+      _audioPlayer.play();
+      _updateMarkers();
+    } catch (e) {
+      print('Error playing audio: $e');
+      if (!mounted) return;
+      setState(() {
+        _statusMessage = "Error playing audio: $e";
+        _isAudioPlaying = false;
+      });
+    }
+  }
+
+  void _updateMarkers() {
+    if (_tour == null) return;
+
+    setState(() {
+      _markers = _tour!.points.asMap().entries.map((entry) {
+        int index = entry.key;
+        TourPoint p = entry.value;
+
+        // Determine marker color based on state
+        BitmapDescriptor markerColor;
+        if (_completedWaypoints.contains(index)) {
+          // Completed: Purple
+          markerColor = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet);
+        } else if (index == _currentPointIndex && _tourStarted) {
+          // Current: Green
+          markerColor = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
+        } else {
+          // Unvisited: Red
+          markerColor = BitmapDescriptor.defaultMarker;
+        }
+
+        return Marker(
+          markerId: MarkerId(p.id.toString()),
+          position: LatLng(p.latitude, p.longitude),
+          infoWindow: InfoWindow(
+            title: '${index + 1}. ${p.name ?? 'Point ${p.id}'}',
+            snippet: _completedWaypoints.contains(index) ? 'Completed ✓' : null,
+          ),
+          icon: markerColor,
+        );
+      }).toSet();
+    });
+  }
+
   Future<void> _loadTourDetails() async {
     try {
       final tour = await ApiService().fetchTourDetails(widget.tourId);
       if (!mounted) return;
       setState(() {
         _tour = tour;
-        _statusMessage = 'Tour loaded. Waiting for location...';
-        _markers = tour.points.asMap().entries.map((entry) {
-          int index = entry.key;
-          TourPoint point = entry.value;
-          return Marker(
-            markerId: MarkerId(point.id.toString()),
-            position: LatLng(point.latitude, point.longitude),
-            infoWindow: InfoWindow(
-              title: '${index + 1}. ${point.name ?? 'Point ${point.id}'}',
-            ),
-            icon: index == 0
-                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
-                : BitmapDescriptor.defaultMarker,
-          );
-        }).toSet();
+        _statusMessage = 'Tour loaded. Select a playback mode to begin.';
+        _updateMarkers();
       });
       if (tour.points.isNotEmpty) {
         _goToPoint(tour.points.first);
       }
-      _startLocationListener();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1912,80 +2123,35 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
       CameraPosition(
         target: LatLng(point.latitude, point.longitude),
         zoom: 16.0,
-      )
+      ),
     ));
-
-    // Update markers to highlight current waypoint
-    if (_tour != null) {
-      setState(() {
-        _markers = _tour!.points.asMap().entries.map((entry) {
-          int index = entry.key;
-          TourPoint p = entry.value;
-          return Marker(
-            markerId: MarkerId(p.id.toString()),
-            position: LatLng(p.latitude, p.longitude),
-            infoWindow: InfoWindow(
-              title: '${index + 1}. ${p.name ?? 'Point ${p.id}'}',
-            ),
-            icon: index == _currentPointIndex
-                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
-                : index < _currentPointIndex
-                    ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)
-                    : BitmapDescriptor.defaultMarker,
-          );
-        }).toSet();
-      });
-    }
   }
 
-  Future<void> _startLocationListener() async {
-    await _determinePosition();
-    _positionStreamSubscription = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10)
-    ).listen((Position position) {
-      if (!mounted || _tour == null || _currentPointIndex >= _tour!.points.length) {
+  Future<void> _determinePosition() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() {
+        _statusMessage = 'Location services are disabled.';
+      });
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() {
+          _statusMessage = 'Location permissions are denied';
+        });
         return;
       }
+    }
 
-      final currentTargetPoint = _tour!.points[_currentPointIndex];
-      final distanceInMeters = Geolocator.distanceBetween(
-        position.latitude,
-        position.longitude,
-        currentTargetPoint.latitude,
-        currentTargetPoint.longitude,
-      );
-
+    if (permission == LocationPermission.deniedForever) {
       setState(() {
-        if (!_isAudioPlaying) {
-          _statusMessage = "Waypoint ${_currentPointIndex + 1}/${_tour!.points.length}: ${distanceInMeters.toStringAsFixed(0)}m away";
-        }
+        _statusMessage = 'Location permissions are permanently denied';
       });
-
-      if (distanceInMeters < 25 && !_isAudioPlaying) {
-        _playAudioForPoint(currentTargetPoint);
-      }
-    });
-  }
-
-  Future<void> _playAudioForPoint(TourPoint point) async {
-    setState(() {
-      _isAudioPlaying = true;
-      _statusMessage = "Playing audio for waypoint ${_currentPointIndex + 1}/${_tour!.points.length}";
-    });
-
-    try {
-      final audioUrl = '$serverBaseUrl/uploads/${point.audioFilePath}';
-      print('Playing audio from: $audioUrl');
-
-      await _audioPlayer.setUrl(audioUrl);
-      _audioPlayer.play();
-    } catch (e) {
-      print('Error playing audio: $e');
-      if (!mounted) return;
-      setState(() {
-        _statusMessage = "Error playing audio: $e";
-        _isAudioPlaying = false;
-      });
+      return;
     }
   }
 
@@ -2001,114 +2167,241 @@ class _TourPlaybackScreenState extends State<TourPlaybackScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_tour?.title ?? 'Loading Tour...'),
-        actions: [
-          if (_tour != null && _currentPointIndex < _tour!.points.length)
-            IconButton(
-              icon: const Icon(Icons.skip_next),
-              onPressed: _skipCurrentWaypoint,
-              tooltip: 'Skip Waypoint',
-            ),
-        ],
+        title: Text(_tour?.title ?? 'Tour Playback'),
+        backgroundColor: Colors.blue,
       ),
-      body: Stack(
+      body: Column(
         children: [
-          GoogleMap(
-            onMapCreated: (controller) => _mapController.complete(controller),
-            initialCameraPosition: const CameraPosition(target: LatLng(0, 0), zoom: 14),
-            markers: _markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
+          // Mode Selection Panel (only show before tour starts)
+          if (!_tourStarted && _tour != null)
+            Container(
+              padding: const EdgeInsets.all(16),
+              color: Colors.blue.shade50,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Select Playback Mode:',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _playbackMode = PlaybackMode.sequential;
+                            });
+                          },
+                          icon: const Icon(Icons.format_list_numbered),
+                          label: const Text('Sequential'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _playbackMode == PlaybackMode.sequential
+                                ? Colors.blue
+                                : Colors.grey.shade300,
+                            foregroundColor: _playbackMode == PlaybackMode.sequential
+                                ? Colors.white
+                                : Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _playbackMode = PlaybackMode.proximity;
+                            });
+                          },
+                          icon: const Icon(Icons.explore),
+                          label: const Text('Proximity'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _playbackMode == PlaybackMode.proximity
+                                ? Colors.green
+                                : Colors.grey.shade300,
+                            foregroundColor: _playbackMode == PlaybackMode.proximity
+                                ? Colors.white
+                                : Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _playbackMode == PlaybackMode.sequential
+                        ? '📍 Follow waypoints in order (1→2→3...)'
+                        : '🧭 Explore freely - play waypoints as you approach them',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _startTour,
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Start Tour'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Status Bar
+          Container(
+            padding: const EdgeInsets.all(12),
+            color: _isAudioPlaying ? Colors.green.shade100 : Colors.grey.shade200,
+            child: Row(
+              children: [
+                if (_isAudioPlaying)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                if (_isAudioPlaying) const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _statusMessage,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                if (_tourStarted)
+                  Chip(
+                    label: Text(
+                      '${_completedWaypoints.length}/${_tour?.points.length ?? 0}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    backgroundColor: Colors.blue.shade100,
+                  ),
+              ],
+            ),
           ),
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Container(
+
+          // Map
+          Expanded(
+            child: _tour == null
+                ? const Center(child: CircularProgressIndicator())
+                : GoogleMap(
+                    initialCameraPosition: CameraPosition(
+                      target: _tour!.points.isNotEmpty
+                          ? LatLng(_tour!.points.first.latitude, _tour!.points.first.longitude)
+                          : const LatLng(0, 0),
+                      zoom: 14.0,
+                    ),
+                    markers: _markers,
+                    myLocationEnabled: true,
+                    myLocationButtonEnabled: true,
+                    onMapCreated: (GoogleMapController controller) {
+                      _mapController.complete(controller);
+                    },
+                  ),
+          ),
+
+          // Control Buttons
+          if (_tourStarted)
+            Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 10,
+                    color: Colors.grey.shade300,
+                    blurRadius: 4,
                     offset: const Offset(0, -2),
                   ),
                 ],
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+              child: Row(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (_isAudioPlaying)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 8.0),
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      Expanded(
-                        child: Text(
-                          _statusMessage,
-                          style: Theme.of(context).textTheme.titleMedium,
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_tour != null && _currentPointIndex < _tour!.points.length)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12.0),
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.skip_next),
-                        label: const Text('Skip to Next Waypoint'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        ),
-                        onPressed: _skipCurrentWaypoint,
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isAudioPlaying || _currentPointIndex >= (_tour?.points.length ?? 0)
+                          ? _skipCurrentWaypoint
+                          : null,
+                      icon: const Icon(Icons.skip_next),
+                      label: const Text('Skip Waypoint'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        disabledBackgroundColor: Colors.grey.shade300,
                       ),
                     ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Legend'),
+                            content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildLegendItem(Colors.red, 'Unvisited waypoint'),
+                                _buildLegendItem(Colors.green, 'Current waypoint'),
+                                _buildLegendItem(Colors.purple, 'Completed waypoint'),
+                              ],
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Close'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.info_outline),
+                      label: const Text('Legend'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  Future<void> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      if (!mounted) return;
-      setState(() => _statusMessage = 'Location services are disabled.');
-      return;
-    }
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        if (!mounted) return;
-        setState(() => _statusMessage = 'Location permissions are denied.');
-        return;
-      }
-    }
-    if (permission == LocationPermission.deniedForever) {
-      if (!mounted) return;
-      setState(() => _statusMessage = 'Location permissions are permanently denied.');
-      return;
-    }
+  Widget _buildLegendItem(Color color, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Container(
+            width: 16,
+            height: 16,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(text),
+        ],
+      ),
+    );
   }
 }
+
 class MapScreen extends StatelessWidget {
   const MapScreen({super.key});
 
