@@ -1,3 +1,4 @@
+// File: lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -299,7 +300,10 @@ class ApiService {
     }
   }
 }
-// --- App Main Widget ---
+
+// NOTE: The rest of the file (TourApp, ChoiceScreen, TourListScreen, etc.)
+// remains unchanged from the original. Only the ApiService class has been modified.
+// Add the remaining classes from your original main.dart file below this comment.
 
 class TourApp extends StatelessWidget {
   const TourApp({super.key});

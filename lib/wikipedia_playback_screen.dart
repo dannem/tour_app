@@ -16,6 +16,7 @@ class WikipediaPlaybackScreen extends StatefulWidget {
 }
 
 class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
+  bool _isDisposed = false;
   final Completer<GoogleMapController> _mapController = Completer();
   final WikipediaService _wikiService = WikipediaService();
   final FlutterTts _tts = FlutterTts();
@@ -34,6 +35,11 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   bool _showListView = false;
   WikipediaLanguage _currentLanguage = WikipediaLanguage.languages[0]; // Default to English
 
+  void _safeSetState(VoidCallback fn) {
+    if (mounted && !_isDisposed) {
+      setState(fn);
+      }
+    }
   @override
   void initState() {
     super.initState();
@@ -226,29 +232,29 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   }
 
   Future<void> _searchNearbyArticles(Position position) async {
-    try {
-      setState(() {
-        _statusMessage = 'Searching for places...';
-      });
+    if (_isDisposed || !mounted) return; // Add this check
 
-      final articles = await _wikiService.getNearbyArticles(
-        position.latitude,
-        position.longitude,
-        _searchRadiusMeters,
+    try {
+      final articles = await _wikiService.searchNearby(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        radiusMeters: _searchRadiusMeters,
+        limit: 20,
       );
+
+      if (_isDisposed || !mounted) return; // Add this check after async
 
       setState(() {
         _nearbyArticles = articles;
-        _statusMessage = articles.isEmpty
-            ? 'No places found nearby'
-            : 'Found ${articles.length} nearby places';
         _updateMarkers();
+        if (!_isPlaying && articles.isNotEmpty) {
+          _statusMessage = 'Found ${articles.length} nearby places';
+        } else if (articles.isEmpty) {
+          _statusMessage = 'No articles found in ${_currentLanguage.nativeName}. Try another language or increase radius.';
+        }
       });
     } catch (e) {
-      print('Error searching articles: $e');
-      setState(() {
-        _statusMessage = 'Error searching for places';
-      });
+      print('Error searching Wikipedia: $e');
     }
   }
 
@@ -724,89 +730,16 @@ Future<void> _saveAsCustomTour() async {
 }
 
 
-  Future<String?> _generateTtsAudio(WikipediaArticle article, int index) async {
-    try {
-      // Get full article text if extract is too short
-      String textToRead = article.extract;
-      if (textToRead.length < 200) {
-        try {
-          final fullText = await _wikiService.getFullArticle(article.pageId);
-          if (fullText.isNotEmpty) {
-            textToRead = fullText;
-          }
-        } catch (e) {
-          print('Could not fetch full article, using extract: $e');
-        }
-      }
-
-      // Limit text length to avoid very long audio files
-      if (textToRead.length > 1000) {
-        textToRead = '${textToRead.substring(0, 1000)}...';
-      }
-
-      // Create introduction
-      final introduction = 'Now approaching ${article.title}. $textToRead';
-
-      // Generate audio file using TTS
-      final fileName = 'wiki_tts_${DateTime.now().millisecondsSinceEpoch}_$index.wav';
-
-      // Try Music directory which TTS usually has access to
-      final musicPath = '/storage/emulated/0/Music/$fileName';
-
-      print('🎤 Generating TTS audio to: $musicPath');
-
-      final result = await _tts.synthesizeToFile(introduction, musicPath);
-      print('📝 TTS result code: $result');
-
-      if (result == 1) {
-        print('✅ TTS synthesis completed');
-
-        // Wait for file system to sync
-        await Future.delayed(const Duration(seconds: 2));
-
-        // Check if file exists
-        final file = File(musicPath);
-        if (await file.exists()) {
-          final size = await file.length();
-          print('✅ Audio file found: $musicPath (${size} bytes)');
-          return musicPath;
-        }
-
-        print('🔍 File not at expected location, searching...');
-
-        // Search common locations
-        final searchLocations = [
-          '/storage/emulated/0/$fileName',
-          '/storage/emulated/0/Download/$fileName',
-          '/sdcard/$fileName',
-          '/sdcard/Music/$fileName',
-        ];
-
-        for (final location in searchLocations) {
-          final altFile = File(location);
-          if (await altFile.exists()) {
-            print('✅ Found at: $location');
-            return location;
-          }
-        }
-
-        print('❌ File not found at any location after extensive search');
-        return null;
-      } else {
-        print('❌ TTS synthesis failed with code: $result');
-        return null;
-      }
-    } catch (e, stackTrace) {
-      print('❌ Error generating TTS audio for ${article.title}: $e');
-      print('Stack trace: $stackTrace');
-      return null;
-    }
-  }
-
   @override
   void dispose() {
+    _isDisposed = true;
     _positionStreamSubscription?.cancel();
-    _tts.stop();
+    _positionStreamSubscription = null;
+    try {
+      _tts.stop();
+    } catch (e) {
+      print('Error stopping TTS: $e');
+    }
     super.dispose();
   }
 
@@ -846,7 +779,7 @@ Future<void> _saveAsCustomTour() async {
           IconButton(
             icon: Icon(_showListView ? Icons.map : Icons.list),
             onPressed: () {
-              setState(() {
+              _safeSetState(() {
                 _showListView = !_showListView;
               });
             },
