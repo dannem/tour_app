@@ -8,6 +8,7 @@ class WikipediaArticle {
   final double longitude;
   final int pageId;
   final String? thumbnailUrl;
+  final bool hasValidCoordinates;
 
   WikipediaArticle({
     required this.title,
@@ -16,16 +17,53 @@ class WikipediaArticle {
     required this.longitude,
     required this.pageId,
     this.thumbnailUrl,
+    required this.hasValidCoordinates,
   });
 
   factory WikipediaArticle.fromJson(Map<String, dynamic> json) {
+    // Extract coordinates with better validation
+    double lat = 0.0;
+    double lon = 0.0;
+    bool validCoords = false;
+
+    // Debug logging
+    print('Parsing article: ${json['title']}');
+
+    if (json['coordinates'] != null && json['coordinates'] is List) {
+      final coordsList = json['coordinates'] as List;
+      print('Coordinates list length: ${coordsList.length}');
+
+      if (coordsList.isNotEmpty) {
+        final firstCoord = coordsList[0];
+        print('First coordinate: $firstCoord');
+
+        if (firstCoord is Map<String, dynamic>) {
+          if (firstCoord.containsKey('lat') && firstCoord.containsKey('lon')) {
+            lat = (firstCoord['lat'] as num).toDouble();
+            lon = (firstCoord['lon'] as num).toDouble();
+
+            // Validate that coordinates are not zero or invalid
+            if (lat != 0.0 && lon != 0.0 && lat.abs() <= 90 && lon.abs() <= 180) {
+              validCoords = true;
+              print('✅ Valid coordinates: $lat, $lon');
+            } else {
+              print('⚠️ Invalid coordinates: $lat, $lon');
+            }
+          }
+        }
+      }
+    } else {
+      print('⚠️ No coordinates field found');
+    }
+
     return WikipediaArticle(
       title: json['title'] as String,
       extract: json['extract'] as String,
-      latitude: (json['coordinates']?[0]?['lat'] as num?)?.toDouble() ?? 0.0,
-      longitude: (json['coordinates']?[0]?['lon'] as num?)?.toDouble() ?? 0.0,
+      latitude: lat,
+      longitude: lon,
       pageId: json['pageid'] as int,
       thumbnailUrl: json['thumbnail']?['source'] as String?,
+      hasValidCoordinates: validCoords,
     );
   }
 }
@@ -90,6 +128,11 @@ class WikipediaService {
     int radiusMeters = 1000,
     int limit = 10,
   }) async {
+    print('\n=== Wikipedia Search ===');
+    print('Language: $_languageCode');
+    print('Center: $latitude, $longitude');
+    print('Radius: ${radiusMeters}m');
+
     final params = {
       'action': 'query',
       'format': 'json',
@@ -105,6 +148,7 @@ class WikipediaService {
     };
 
     final uri = Uri.parse(_baseUrl).replace(queryParameters: params);
+    print('Request URL: $uri');
 
     try {
       final response = await http.get(uri);
@@ -113,16 +157,32 @@ class WikipediaService {
         final data = json.decode(response.body);
         final pages = data['query']?['pages'] as Map<String, dynamic>?;
 
-        if (pages == null) return [];
+        if (pages == null) {
+          print('No pages found in response');
+          return [];
+        }
 
-        return pages.values
+        print('Raw pages data: $pages');
+
+        final articles = pages.values
             .map((page) => WikipediaArticle.fromJson(page as Map<String, dynamic>))
+            .where((article) => article.hasValidCoordinates) // Filter out articles without valid coordinates
             .toList();
+
+        print('✅ Found ${articles.length} articles with valid coordinates');
+
+        // Log articles without coordinates
+        final invalidCount = pages.length - articles.length;
+        if (invalidCount > 0) {
+          print('⚠️ Filtered out $invalidCount articles without valid coordinates');
+        }
+
+        return articles;
       } else {
-        throw Exception('Failed to load Wikipedia articles');
+        throw Exception('Failed to load Wikipedia articles: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error fetching Wikipedia articles: $e');
+      print('❌ Error fetching Wikipedia articles: $e');
       return [];
     }
   }
