@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'wikipedia_service.dart';
 import 'main.dart'; // For ApiService and Tour
@@ -12,7 +14,8 @@ class WikipediaPlaybackScreen extends StatefulWidget {
   const WikipediaPlaybackScreen({super.key});
 
   @override
-  State<WikipediaPlaybackScreen> createState() => _WikipediaPlaybackScreenState();
+  State<WikipediaPlaybackScreen> createState() =>
+      _WikipediaPlaybackScreenState();
 }
 
 class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
@@ -32,7 +35,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   final Set<int> _playedArticleIds = {};
   final Set<int> _disabledArticleIds = {};
   bool _showListView = false;
-  WikipediaLanguage _currentLanguage = WikipediaLanguage.languages[0]; // Default to English
+  WikipediaLanguage _currentLanguage =
+      WikipediaLanguage.languages[0]; // Default to English
 
   @override
   void initState() {
@@ -153,12 +157,14 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: isSelected ? Colors.blue : Colors.grey.shade300,
+                      backgroundColor:
+                          isSelected ? Colors.blue : Colors.grey.shade300,
                       child: Text(
                         language.code.toUpperCase(),
                         style: TextStyle(
                           color: isSelected ? Colors.white : Colors.black,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
                           fontSize: 12,
                         ),
                       ),
@@ -166,7 +172,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                     title: Text(
                       language.nativeName,
                       style: TextStyle(
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontWeight:
+                            isSelected ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
                     subtitle: Text(language.name),
@@ -228,7 +235,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         if (!_isPlaying && articles.isNotEmpty) {
           _statusMessage = 'Found ${articles.length} nearby places';
         } else if (articles.isEmpty) {
-          _statusMessage = 'No articles found in ${_currentLanguage.nativeName}. Try another language or increase radius.';
+          _statusMessage =
+              'No articles found in ${_currentLanguage.nativeName}. Try another language or increase radius.';
         }
       });
     } catch (e) {
@@ -254,10 +262,13 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         icon: isCurrent
             ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
             : isDisabled
-                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow)
-            : isPlayed
-                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)
-                : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                ? BitmapDescriptor.defaultMarkerWithHue(
+                    BitmapDescriptor.hueYellow)
+                : isPlayed
+                    ? BitmapDescriptor.defaultMarkerWithHue(
+                        BitmapDescriptor.hueViolet)
+                    : BitmapDescriptor.defaultMarkerWithHue(
+                        BitmapDescriptor.hueRed),
         onTap: () => _showArticlePreview(article),
       );
     }).toSet();
@@ -299,7 +310,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       textToRead = await _wikiService.getFullArticle(article.pageId);
     }
 
-    final introduction = 'Now approaching ${article.title}. ${textToRead}';
+    final introduction = 'Now approaching ${article.title}. $textToRead';
     await _tts.speak(introduction);
   }
 
@@ -407,364 +418,371 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   // Add this method to your WikipediaPlaybackScreen class in lib/wikipedia_playback_screen.dart
 // This replaces the existing _saveAsCustomTour method
 
-void _saveAsCustomTour() async {
-  if (_nearbyArticles.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('No articles to save. Search for nearby places first.'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-    return;
-  }
-
-  // Filter out disabled articles AND articles without valid coordinates
-  final articlesWithValidCoords = _nearbyArticles
-      .where((article) =>
-          !_disabledArticleIds.contains(article.pageId) &&
-          article.hasValidCoordinates)
-      .toList();
-
-  final invalidCoordCount = _nearbyArticles
-      .where((article) =>
-          !_disabledArticleIds.contains(article.pageId) &&
-          !article.hasValidCoordinates)
-      .length;
-
-  if (articlesWithValidCoords.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(invalidCoordCount > 0
-            ? 'No articles with valid GPS coordinates found. $invalidCoordCount articles were filtered out.'
-            : 'All articles are disabled. Enable some articles first.'),
-        backgroundColor: Colors.orange,
-        duration: const Duration(seconds: 4),
-      ),
-    );
-    return;
-  }
-
-  // Show warning if some articles were filtered out
-  String warningMessage = '';
-  if (invalidCoordCount > 0) {
-    warningMessage = '\n\n⚠️ Note: $invalidCoordCount article${invalidCoordCount > 1 ? 's' : ''} '
-        'will be skipped due to missing GPS coordinates.';
-  }
-
-  // Show dialog to get tour name and description
-  final nameController = TextEditingController(
-    text: 'Wikipedia Tour - ${_currentLanguage.nativeName}',
-  );
-  final descController = TextEditingController(
-    text: 'Wikipedia articles in ${_currentLanguage.nativeName} near '
-        '${_currentPosition?.latitude.toStringAsFixed(4)}, '
-        '${_currentPosition?.longitude.toStringAsFixed(4)}',
-  );
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Save Wikipedia Tour'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'This will save ${articlesWithValidCoords.length} article${articlesWithValidCoords.length != 1 ? 's' : ''} '
-              'as a custom tour.$warningMessage',
-              style: const TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Tour Name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.blue),
-                      SizedBox(width: 4),
-                      Text(
-                        'How it works:',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    '• Text-to-speech will be used for audio\n'
-                    '• Articles are saved in order of distance\n'
-                    '• Only articles with valid GPS coordinates are included\n'
-                    '• You can play this tour later from the main menu',
-                    style: TextStyle(fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-          ],
+  void _saveAsCustomTour() async {
+    if (_nearbyArticles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No articles to save. Search for nearby places first.'),
+          backgroundColor: Colors.orange,
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            nameController.dispose();
-            descController.dispose();
-            Navigator.pop(context, false);
-          },
-          child: const Text('Cancel'),
+      );
+      return;
+    }
+
+    // Filter out disabled articles AND articles without valid coordinates
+    final articlesWithValidCoords = _nearbyArticles
+        .where((article) =>
+            !_disabledArticleIds.contains(article.pageId) &&
+            article.hasValidCoordinates)
+        .toList();
+
+    final invalidCoordCount = _nearbyArticles
+        .where((article) =>
+            !_disabledArticleIds.contains(article.pageId) &&
+            !article.hasValidCoordinates)
+        .length;
+
+    if (articlesWithValidCoords.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(invalidCoordCount > 0
+              ? 'No articles with valid GPS coordinates found. $invalidCoordCount articles were filtered out.'
+              : 'All articles are disabled. Enable some articles first.'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
         ),
-        ElevatedButton(
-          onPressed: () {
-            Navigator.pop(context, true);
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
+      );
+      return;
+    }
+
+    // Show warning if some articles were filtered out
+    String warningMessage = '';
+    if (invalidCoordCount > 0) {
+      warningMessage =
+          '\n\n⚠️ Note: $invalidCoordCount article${invalidCoordCount > 1 ? 's' : ''} '
+          'will be skipped due to missing GPS coordinates.';
+    }
+
+    // Show dialog to get tour name and description
+    final nameController = TextEditingController(
+      text: 'Wikipedia Tour - ${_currentLanguage.nativeName}',
+    );
+    final descController = TextEditingController(
+      text: 'Wikipedia articles in ${_currentLanguage.nativeName} near '
+          '${_currentPosition?.latitude.toStringAsFixed(4)}, '
+          '${_currentPosition?.longitude.toStringAsFixed(4)}',
+    );
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Save Wikipedia Tour'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This will save ${articlesWithValidCoords.length} article${articlesWithValidCoords.length != 1 ? 's' : ''} '
+                'as a custom tour.$warningMessage',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Tour Name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descController,
+                decoration: const InputDecoration(
+                  labelText: 'Description',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                        SizedBox(width: 4),
+                        Text(
+                          'How it works:',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '• Text-to-speech will be used for audio\n'
+                      '• Articles are saved in order of distance\n'
+                      '• Only articles with valid GPS coordinates are included\n'
+                      '• You can play this tour later from the main menu',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          child: const Text('Save Tour'),
         ),
-      ],
-    ),
-  );
+        actions: [
+          TextButton(
+            onPressed: () {
+              nameController.dispose();
+              descController.dispose();
+              Navigator.pop(context, false);
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context, true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Save Tour'),
+          ),
+        ],
+      ),
+    );
 
-  if (confirmed != true) {
+    if (confirmed != true) {
+      nameController.dispose();
+      descController.dispose();
+      return;
+    }
+
+    final tourName = nameController.text;
+    final tourDesc = descController.text;
     nameController.dispose();
     descController.dispose();
-    return;
-  }
 
-  final tourName = nameController.text;
-  final tourDesc = descController.text;
-  nameController.dispose();
-  descController.dispose();
+    // Show loading dialog with progress
+    if (!mounted) return;
 
-  // Show loading dialog with progress
-  if (!mounted) return;
+    int currentStep = 0;
+    int totalSteps = articlesWithValidCoords.length + 1;
 
-  int currentStep = 0;
-  int totalSteps = articlesWithValidCoords.length + 1;
-
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Saving Wikipedia Tour'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(
-              'Step $currentStep of $totalSteps',
-              style: const TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              currentStep == 0
-                  ? 'Creating tour on server...'
-                  : currentStep <= articlesWithValidCoords.length
-                      ? 'Generating audio $currentStep/${articlesWithValidCoords.length}...'
-                      : 'Complete!',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Saving Wikipedia Tour'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Step $currentStep of $totalSteps',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                currentStep == 0
+                    ? 'Creating tour on server...'
+                    : currentStep <= articlesWithValidCoords.length
+                        ? 'Generating audio $currentStep/${articlesWithValidCoords.length}...'
+                        : 'Complete!',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  ).then((_) {});
+    ).then((_) {});
 
-  try {
-    // Sort articles by distance
-    if (_currentPosition != null) {
-      articlesWithValidCoords.sort((a, b) {
-        final distA = Geolocator.distanceBetween(
-          _currentPosition!.latitude,
-          _currentPosition!.longitude,
-          a.latitude,
-          a.longitude,
-        );
-        final distB = Geolocator.distanceBetween(
-          _currentPosition!.latitude,
-          _currentPosition!.longitude,
-          b.latitude,
-          b.longitude,
-        );
-        return distA.compareTo(distB);
-      });
-    }
+    try {
+      // Sort articles by distance
+      if (_currentPosition != null) {
+        articlesWithValidCoords.sort((a, b) {
+          final distA = Geolocator.distanceBetween(
+            _currentPosition!.latitude,
+            _currentPosition!.longitude,
+            a.latitude,
+            a.longitude,
+          );
+          final distB = Geolocator.distanceBetween(
+            _currentPosition!.latitude,
+            _currentPosition!.longitude,
+            b.latitude,
+            b.longitude,
+          );
+          return distA.compareTo(distB);
+        });
+      }
 
-    print('\n=== Saving Wikipedia Tour ===');
-    print('Tour name: $tourName');
-    print('Valid articles: ${articlesWithValidCoords.length}');
-    print('Filtered out: $invalidCoordCount articles without coordinates');
+      print('\n=== Saving Wikipedia Tour ===');
+      print('Tour name: $tourName');
+      print('Valid articles: ${articlesWithValidCoords.length}');
+      print('Filtered out: $invalidCoordCount articles without coordinates');
 
-    // Create the tour
-    final apiService = ApiService();
-    Tour? newTour;
-    int retries = 3;
+      // Create the tour
+      final apiService = ApiService();
+      Tour? newTour;
+      int retries = 3;
 
-    while (retries > 0 && newTour == null) {
-      try {
-        newTour = await apiService.createTour(tourName, tourDesc)
-            .timeout(const Duration(seconds: 60));
-        currentStep = 1;
-        break;
-      } catch (e) {
-        print('Attempt ${4 - retries} failed: $e');
-        retries--;
-        if (retries > 0) {
-          print('Retrying... ($retries attempts left)');
-          await Future.delayed(const Duration(seconds: 3));
-        } else {
-          rethrow;
+      while (retries > 0 && newTour == null) {
+        try {
+          newTour = await apiService
+              .createTour(tourName, tourDesc)
+              .timeout(const Duration(seconds: 120));
+          currentStep = 1;
+          break;
+        } catch (e) {
+          print('Attempt ${4 - retries} failed: $e');
+          retries--;
+          if (retries > 0) {
+            print('Retrying... ($retries attempts left)');
+            await Future.delayed(const Duration(seconds: 3));
+          } else {
+            rethrow;
+          }
         }
       }
-    }
 
-    if (newTour == null) {
-      throw Exception('Failed to create tour after multiple attempts');
-    }
-
-    print('✅ Tour created with ID: ${newTour.id}');
-
-    int successCount = 0;
-    int failCount = 0;
-
-    // Create waypoints for each article with valid coordinates
-    for (int i = 0; i < articlesWithValidCoords.length; i++) {
-      final article = articlesWithValidCoords[i];
-      print('\n--- Processing article ${i + 1}/${articlesWithValidCoords.length} ---');
-      print('Title: ${article.title}');
-      print('Coordinates: ${article.latitude}, ${article.longitude}');
-      print('Valid coords: ${article.hasValidCoordinates}');
-
-      currentStep = i + 2;
-
-      try {
-        // Validate coordinates one more time before creating waypoint
-        if (!article.hasValidCoordinates ||
-            article.latitude == 0.0 ||
-            article.longitude == 0.0) {
-          print('⚠️ Skipping: Invalid coordinates');
-          failCount++;
-          continue;
-        }
-
-        // Generate TTS audio file
-        final audioPath = await _generateTtsAudio(article, i);
-
-        if (audioPath == null) {
-          print('⚠️ Could not generate audio');
-          failCount++;
-          continue;
-        }
-
-        print('Audio generated: $audioPath');
-
-        // Verify file exists
-        final file = File(audioPath);
-        if (!await file.exists()) {
-          print('⚠️ Audio file not found at $audioPath');
-          failCount++;
-          continue;
-        }
-
-        await apiService.createWaypoint(
-          tourId: newTour.id,
-          name: article.title,
-          latitude: article.latitude,
-          longitude: article.longitude,
-          audioFilePath: audioPath,
-        );
-
-        print('✅ Waypoint created successfully');
-        successCount++;
-      } catch (e) {
-        print('❌ Error creating waypoint for ${article.title}: $e');
-        failCount++;
+      if (newTour == null) {
+        throw Exception('Failed to create tour after multiple attempts');
       }
-    }
 
-    if (!mounted) return;
-    Navigator.pop(context); // Close loading dialog
+      print('✅ Tour created with ID: ${newTour.id}');
 
-    print('\n=== Tour Save Complete ===');
-    print('Success: $successCount waypoints');
-    print('Failed: $failCount waypoints');
+      int successCount = 0;
+      int failCount = 0;
 
-    final resultMessage = failCount > 0
-        ? 'Tour "$tourName" saved with $successCount waypoints! '
-          '($failCount failed)'
-        : 'Tour "$tourName" saved with $successCount waypoints!';
+      // Create waypoints for each article with valid coordinates
+      for (int i = 0; i < articlesWithValidCoords.length; i++) {
+        final article = articlesWithValidCoords[i];
+        print(
+            '\n--- Processing article ${i + 1}/${articlesWithValidCoords.length} ---');
+        print('Title: ${article.title}');
+        print('Coordinates: ${article.latitude}, ${article.longitude}');
+        print('Valid coords: ${article.hasValidCoordinates}');
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(resultMessage),
-        backgroundColor: failCount > 0 ? Colors.orange : Colors.green,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'View Tours',
-          textColor: Colors.white,
-          onPressed: () {
-            Navigator.pop(context);
-          },
+        currentStep = i + 2;
+
+        try {
+          // Validate coordinates one more time before creating waypoint
+          if (!article.hasValidCoordinates ||
+              article.latitude == 0.0 ||
+              article.longitude == 0.0) {
+            print('⚠️ Skipping: Invalid coordinates');
+            failCount++;
+            continue;
+          }
+
+          // Generate TTS audio file
+          final audioPath = await _generateTtsAudio(article, i);
+
+          if (audioPath == null) {
+            print('⚠️ Could not generate audio');
+            failCount++;
+            continue;
+          }
+
+          print('Audio generated: $audioPath');
+
+          // Verify file exists
+          final file = File(audioPath);
+          if (!await file.exists()) {
+            print('⚠️ Audio file not found at $audioPath');
+            failCount++;
+            continue;
+          }
+
+          await apiService.createWaypoint(
+            tourId: newTour.id,
+            name: article.title,
+            latitude: article.latitude,
+            longitude: article.longitude,
+            audioFilePath: audioPath,
+          );
+
+          print('✅ Waypoint created successfully');
+          successCount++;
+        } catch (e) {
+          print('❌ Error creating waypoint for ${article.title}: $e');
+          failCount++;
+        }
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      print('\n=== Tour Save Complete ===');
+      print('Success: $successCount waypoints');
+      print('Failed: $failCount waypoints');
+
+      final resultMessage = failCount > 0
+          ? 'Tour "$tourName" saved with $successCount waypoints! '
+              '($failCount failed)'
+          : 'Tour "$tourName" saved with $successCount waypoints!';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(resultMessage),
+          backgroundColor: failCount > 0 ? Colors.orange : Colors.green,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'View Tours',
+            textColor: Colors.white,
+            onPressed: () {
+              Navigator.pop(context);
+            },
+          ),
         ),
-      ),
-    );
-  } catch (e, stackTrace) {
-    print('❌ Error saving tour: $e');
-    print('Stack trace: $stackTrace');
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error saving tour: $e');
+      print('Stack trace: $stackTrace');
 
-    if (!mounted) return;
-    Navigator.pop(context); // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
 
-    String errorMessage = 'Failed to save tour: $e';
-    if (e.toString().contains('Connection closed') ||
-        e.toString().contains('TimeoutException')) {
-      errorMessage = 'Server connection timeout. The server may be starting up. '
-          'Please try again in a minute.';
-    }
+      String errorMessage = 'Failed to save tour: $e';
+      if (e.toString().contains('Connection closed') ||
+          e.toString().contains('TimeoutException')) {
+        errorMessage =
+            'Server connection timeout. The server may be starting up. '
+            'Please try again in a minute.';
+      }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(errorMessage),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'Retry',
-          textColor: Colors.white,
-          onPressed: () {
-            _saveAsCustomTour();
-          },
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              _saveAsCustomTour();
+            },
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
-}
-  Future<String?> _generateTtsAudio(WikipediaArticle article, int index) async {
+
+  Future<String?> _generateTtsAudio(
+      WikipediaArticle article, int index) async {
     try {
       // Get full article text if extract is too short
       String textToRead = article.extract;
@@ -789,7 +807,8 @@ void _saveAsCustomTour() async {
 
       // Generate audio file using TTS with proper path
       final directory = await getApplicationDocumentsDirectory();
-      final fileName = 'wiki_tts_${DateTime.now().millisecondsSinceEpoch}_$index.wav';
+      final fileName =
+          'wiki_tts_${DateTime.now().millisecondsSinceEpoch}_$index.wav';
       final filePath = '${directory.path}/$fileName';
 
       print('Generating TTS audio to: $filePath');
@@ -819,58 +838,66 @@ void _saveAsCustomTour() async {
   }
 
   Future<bool> _createServerTTSWaypoint({
-  required int tourId,
-  required WikipediaArticle article,
-  required int index,
-}) async {
-  try {
-    // Get full article text if extract is too short
-    String textToRead = article.extract;
-    if (textToRead.length < 200) {
-      try {
-        final fullText = await _wikiService.getFullArticle(article.pageId);
-        if (fullText.isNotEmpty) {
-          textToRead = fullText;
+    required int tourId,
+    required WikipediaArticle article,
+    required int index,
+  }) async {
+    try {
+      // Get full article text if extract is too short
+      String textToRead = article.extract;
+      if (textToRead.length < 200) {
+        try {
+          final fullText = await _wikiService.getFullArticle(article.pageId);
+          if (fullText.isNotEmpty) {
+            textToRead = fullText;
+          }
+        } catch (e) {
+          print('Could not fetch full article, using extract: $e');
         }
-      } catch (e) {
-        print('Could not fetch full article, using extract: $e');
       }
+
+      // Limit text length to avoid very long audio files (about 2-3 minutes of speech)
+      if (textToRead.length > 1500) {
+        textToRead = '${textToRead.substring(0, 1500)}...';
+      }
+
+      // Create introduction
+      final introduction = 'Now approaching ${article.title}. $textToRead';
+
+      print('Creating server-side TTS waypoint for: ${article.title}');
+
+      // Call server to generate TTS and create waypoint
+      await ApiService().createWaypointWithTTS(
+        tourId: tourId,
+        name: article.title,
+        latitude: article.latitude,
+        longitude: article.longitude,
+        text: introduction,
+        language: _getTtsLanguageCode(),
+      );
+
+      print('✅ Server-side TTS waypoint created successfully');
+      return true;
+    } catch (e) {
+      print(
+          '❌ Error creating server-side TTS waypoint for ${article.title}: $e');
+      return false;
     }
-
-    // Limit text length to avoid very long audio files (about 2-3 minutes of speech)
-    if (textToRead.length > 1500) {
-      textToRead = '${textToRead.substring(0, 1500)}...';
-    }
-
-    // Create introduction
-    final introduction = 'Now approaching ${article.title}. $textToRead';
-
-    print('Creating server-side TTS waypoint for: ${article.title}');
-
-    // Call server to generate TTS and create waypoint
-    await ApiService().createWaypointWithTTS(
-      tourId: tourId,
-      name: article.title,
-      latitude: article.latitude,
-      longitude: article.longitude,
-      text: introduction,
-      language: _getTtsLanguageCode(),
-    );
-
-    print('✅ Server-side TTS waypoint created successfully');
-    return true;
-  } catch (e) {
-    print('❌ Error creating server-side TTS waypoint for ${article.title}: $e');
-    return false;
   }
-}
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            const Text('Wikipedia Tour'),
+            // FIX: Wrapped the title Text with Expanded
+            const Expanded(
+              child: Text(
+                'Wikipedia Tour',
+                overflow: TextOverflow.ellipsis, // Prevents text from wrapping
+              ),
+            ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -880,7 +907,8 @@ void _saveAsCustomTour() async {
               ),
               child: Text(
                 _currentLanguage.code.toUpperCase(),
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -943,116 +971,120 @@ void _saveAsCustomTour() async {
 
   Widget _buildMapView() {
     return Stack(
-        children: [
-          GoogleMap(
-            onMapCreated: (controller) => _mapController.complete(controller),
-            initialCameraPosition: const CameraPosition(
-              target: LatLng(37.7749, -122.4194),
-              zoom: 15,
-            ),
-            markers: _markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-            mapType: MapType.normal,
+      children: [
+        GoogleMap(
+          onMapCreated: (controller) => _mapController.complete(controller),
+          initialCameraPosition: const CameraPosition(
+            target: LatLng(37.7749, -122.4194),
+            zoom: 15,
           ),
-          Positioned(
-            top: 16,
-            left: 16,
-            right: 16,
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          _isPlaying ? Icons.volume_up : Icons.search,
-                          color: _isPlaying ? Colors.green : Colors.blue,
+          markers: _markers,
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
+          mapType: MapType.normal,
+        ),
+        Positioned(
+          top: 16,
+          left: 16,
+          right: 16,
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _isPlaying ? Icons.volume_up : Icons.search,
+                        color: _isPlaying ? Colors.green : Colors.blue,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _statusMessage,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _statusMessage,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                      ),
+                    ],
+                  ),
+                  if (_nearbyArticles.isNotEmpty)
+                    Column(
+                      children: [
+                        Text(
+                          'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
+                          style:
+                              const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'Language: ${_currentLanguage.nativeName}',
+                              style: const TextStyle(
+                                  fontSize: 11, color: Colors.blue),
+                            ),
+                            if (_disabledArticleIds.isNotEmpty)
+                              Text(
+                                ' • ${_disabledArticleIds.length} disabled',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.orange),
+                              ),
+                          ],
                         ),
                       ],
                     ),
-                    if (_nearbyArticles.isNotEmpty)
-                      Column(
-                        children: [
-                          Text(
-                            'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                'Language: ${_currentLanguage.nativeName}',
-                                style: const TextStyle(fontSize: 11, color: Colors.blue),
-                              ),
-                              if (_disabledArticleIds.isNotEmpty)
-                                Text(
-                                  ' • ${_disabledArticleIds.length} disabled',
-                                  style: const TextStyle(fontSize: 11, color: Colors.orange),
-                                ),
-                            ],
-                          ),
-                        ],
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_isPlaying)
+          Positioned(
+            bottom: 16,
+            left: 16,
+            right: 16,
+            child: Card(
+              elevation: 8,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _currentArticle?.title ?? '',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                              _isPaused ? Icons.play_arrow : Icons.pause),
+                          iconSize: 32,
+                          color: Colors.blue,
+                          onPressed: _pauseResume,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.stop),
+                          iconSize: 32,
+                          color: Colors.red,
+                          onPressed: _stopPlayback,
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
             ),
           ),
-          if (_isPlaying)
-            Positioned(
-              bottom: 16,
-              left: 16,
-              right: 16,
-              child: Card(
-                elevation: 8,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _currentArticle?.title ?? '',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          IconButton(
-                            icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
-                            iconSize: 32,
-                            color: Colors.blue,
-                            onPressed: _pauseResume,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.stop),
-                            iconSize: 32,
-                            color: Colors.red,
-                            onPressed: _stopPlayback,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      );
+      ],
+    );
   }
 
   Widget _buildListView() {
@@ -1141,9 +1173,11 @@ void _saveAsCustomTour() async {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.search_off, size: 64, color: Colors.grey),
+                      const Icon(Icons.search_off,
+                          size: 64, color: Colors.grey),
                       const SizedBox(height: 16),
-                      Text('No articles found in ${_currentLanguage.nativeName}'),
+                      Text(
+                          'No articles found in ${_currentLanguage.nativeName}'),
                       const SizedBox(height: 8),
                       ElevatedButton.icon(
                         icon: const Icon(Icons.language),
@@ -1162,7 +1196,8 @@ void _saveAsCustomTour() async {
                   itemCount: sortedArticles.length,
                   itemBuilder: (context, index) {
                     final article = sortedArticles[index];
-                    final isDisabled = _disabledArticleIds.contains(article.pageId);
+                    final isDisabled =
+                        _disabledArticleIds.contains(article.pageId);
                     final isPlayed = _playedArticleIds.contains(article.pageId);
                     final isCurrent = _currentArticle?.pageId == article.pageId;
 
@@ -1177,7 +1212,8 @@ void _saveAsCustomTour() async {
                     }
 
                     return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
                       elevation: isCurrent ? 4 : 1,
                       color: isCurrent
                           ? Colors.green.shade50
@@ -1206,8 +1242,11 @@ void _saveAsCustomTour() async {
                         title: Text(
                           article.title,
                           style: TextStyle(
-                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                            decoration: isDisabled ? TextDecoration.lineThrough : null,
+                            fontWeight: isCurrent
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            decoration:
+                                isDisabled ? TextDecoration.lineThrough : null,
                             color: isDisabled ? Colors.grey : null,
                           ),
                         ),
@@ -1221,19 +1260,24 @@ void _saveAsCustomTour() async {
                                     : '${(distance / 1000).toStringAsFixed(1)}km away',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: distance < 50 ? Colors.orange : Colors.grey,
-                                  fontWeight: distance < 50 ? FontWeight.bold : FontWeight.normal,
+                                  color:
+                                      distance < 50 ? Colors.orange : Colors.grey,
+                                  fontWeight: distance < 50
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                 ),
                               ),
                             if (isPlayed)
                               const Text(
                                 'Already played',
-                                style: TextStyle(fontSize: 11, color: Colors.purple),
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.purple),
                               ),
                             if (isDisabled)
                               const Text(
                                 'Disabled - will not auto-play',
-                                style: TextStyle(fontSize: 11, color: Colors.orange),
+                                style: TextStyle(
+                                    fontSize: 11, color: Colors.orange),
                               ),
                           ],
                         ),
@@ -1242,7 +1286,9 @@ void _saveAsCustomTour() async {
                           children: [
                             IconButton(
                               icon: Icon(
-                                isDisabled ? Icons.visibility_off : Icons.visibility,
+                                isDisabled
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
                                 color: isDisabled ? Colors.grey : Colors.blue,
                               ),
                               onPressed: () {
@@ -1273,7 +1319,9 @@ void _saveAsCustomTour() async {
                             ),
                             IconButton(
                               icon: Icon(
-                                isCurrent && _isPlaying ? Icons.stop : Icons.play_arrow,
+                                isCurrent && _isPlaying
+                                    ? Icons.stop
+                                    : Icons.play_arrow,
                                 color: isDisabled ? Colors.grey : Colors.green,
                               ),
                               onPressed: isDisabled
@@ -1285,7 +1333,8 @@ void _saveAsCustomTour() async {
                                         _playArticle(article);
                                       }
                                     },
-                              tooltip: isCurrent && _isPlaying ? 'Stop' : 'Play',
+                              tooltip:
+                                  isCurrent && _isPlaying ? 'Stop' : 'Play',
                             ),
                           ],
                         ),
@@ -1316,7 +1365,8 @@ void _saveAsCustomTour() async {
     }
 
     if (permission == LocationPermission.deniedForever) {
-      setState(() => _statusMessage = 'Location permissions are permanently denied.');
+      setState(
+          () => _statusMessage = 'Location permissions are permanently denied.');
       return;
     }
   }
