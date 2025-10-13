@@ -29,6 +29,7 @@ class TourPoint {
   final String audioFilePath;
   final String? localAudioPath;
   final String? name;
+  final String? text; // Add text field for TTS
 
   TourPoint({
     required this.id,
@@ -37,6 +38,7 @@ class TourPoint {
     required this.audioFilePath,
     this.localAudioPath,
     this.name,
+    this.text,
   });
 
   factory TourPoint.fromJson(Map<String, dynamic> json) {
@@ -46,6 +48,7 @@ class TourPoint {
       longitude: (json['longitude'] as num).toDouble(),
       audioFilePath: json['audio_filename'] as String? ?? '',
       name: json['name'] as String?,
+      text: json['text'] as String?, // Parse text field
     );
   }
 }
@@ -78,13 +81,20 @@ class Tour {
     return Tour(
       id: json['id'] as int,
       title: json['name'] as String? ?? 'Unnamed Tour',
-      description: json['description'] as String? ?? '',
+      description: json['description'] as String? ?? 'No description provided',
       points: tourPoints,
     );
   }
 }
 
 class ApiService {
+  // Add baseUrl as a getter to the class
+  String get baseUrl {
+    return serverBaseUrl.endsWith('/')
+        ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+        : serverBaseUrl;
+  }
+
   Future<List<Tour>> fetchTours() async {
     try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/'));
@@ -111,70 +121,6 @@ class ApiService {
     }
   }
 
-  // Add this diagnostic method to your ApiService class in main.dart
-
-Future<bool> testServerConnection() async {
-  print('🔍 Testing server connection...');
-  print('📍 Server URL: $serverBaseUrl');
-
-  try {
-    // Test 1: Simple GET request to root
-    print('Test 1: Connecting to root endpoint...');
-    final response = await http.get(
-      Uri.parse('$serverBaseUrl/'),
-    ).timeout(const Duration(seconds: 10));
-
-    print('✅ Connection successful!');
-    print('Status: ${response.statusCode}');
-    print('Response: ${response.body}');
-
-    if (response.statusCode == 200) {
-      // Test 2: Check /tours endpoint
-      print('\nTest 2: Checking /tours endpoint...');
-      final toursResponse = await http.get(
-        Uri.parse('$serverBaseUrl/tours/'),
-      ).timeout(const Duration(seconds: 10));
-
-      print('✅ Tours endpoint accessible');
-      print('Status: ${toursResponse.statusCode}');
-
-      return true;
-    }
-
-    return false;
-  } on SocketException catch (e) {
-    print('❌ Socket Exception: ${e.message}');
-    print('   This usually means:');
-    print('   1. Server URL is incorrect');
-    print('   2. Server is down/sleeping');
-    print('   3. No internet connection');
-    print('   4. DNS resolution failed');
-    return false;
-  } on TimeoutException catch (e) {
-    print('❌ Timeout: Server took too long to respond');
-    print('   Server might be waking up (Render free tier)');
-    print('   Wait 30-60 seconds and try again');
-    return false;
-  } on http.ClientException catch (e) {
-    print('❌ Client Exception: $e');
-    return false;
-  } catch (e) {
-    print('❌ Unexpected error: $e');
-    return false;
-  }
-}
-
-// Add this button to your main menu to test the connection
-// Example usage in a widget:
-/*
-ElevatedButton(
-  onPressed: () async {
-    final apiService = ApiService();
-    await apiService.testServerConnection();
-  },
-  child: const Text('Test Server Connection'),
-)
-*/
   Future<Tour> fetchTourDetails(int tourId) async {
     try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/$tourId'));
@@ -228,73 +174,28 @@ ElevatedButton(
   }
 
   Future<void> createWaypoint({
-  required int tourId,
-  required String name,
-  required double latitude,
-  required double longitude,
-  String? description,  // ADD THIS - for storing the text
-  String? audioFilePath, // Make this optional
-}) async {
-  try {
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/tours/$tourId/waypoints'),
-    );
-
-    request.fields['name'] = name;
-    request.fields['latitude'] = latitude.toString();
-    request.fields['longitude'] = longitude.toString();
-
-    // ADD THIS - include description if provided
-    if (description != null && description.isNotEmpty) {
-      request.fields['description'] = description;
-    }
-
-    // Only add audio file if path is provided
-    if (audioFilePath != null) {
-      final audioFile = File(audioFilePath);
-      if (await audioFile.exists()) {
-        request.files.add(
-          await http.MultipartFile.fromPath('audio', audioFilePath),
-        );
-      }
-    }
-
-    print('Creating waypoint: $name at ($latitude, $longitude)');
-    final response = await request.send().timeout(const Duration(seconds: 60));
-
-    if (response.statusCode == 201) {
-      print('✅ Waypoint created successfully');
-    } else {
-      final responseBody = await response.stream.bytesToString();
-      print('❌ Failed to create waypoint: ${response.statusCode}');
-      print('Response: $responseBody');
-      throw Exception('Failed to create waypoint: ${response.statusCode}');
-    }
-  } catch (e) {
-    print('Error in createWaypoint: $e');
-    rethrow;
-  }
-}
-
-  Future<void> createWaypointWithTTS({
     required int tourId,
     required String name,
     required double latitude,
     required double longitude,
-    required String text,
-    String language = 'en-US',
+    required String audioFilePath,
   }) async {
     try {
-      print('Creating TTS waypoint for tour $tourId');
+      print('Creating waypoint for tour $tourId');
       print('Name: $name');
       print('Location: $latitude, $longitude');
-      print('Text length: ${text.length} characters');
+      print('Audio file path: $audioFilePath');
 
-      final baseUrl = serverBaseUrl.endsWith('/')
-          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
-          : serverBaseUrl;
-      final url = '$baseUrl/tours/$tourId/waypoints/tts';
+      // Verify file exists before adding
+      final file = File(audioFilePath);
+      if (!await file.exists()) {
+        throw Exception('Audio file does not exist: $audioFilePath');
+      }
+
+      final fileSize = await file.length();
+      print('File exists, size: $fileSize bytes');
+
+      final url = '$baseUrl/tours/$tourId/waypoints';
 
       print('POST URL: $url');
 
@@ -303,8 +204,10 @@ ElevatedButton(
       request.fields['name'] = name;
       request.fields['latitude'] = latitude.toString();
       request.fields['longitude'] = longitude.toString();
-      request.fields['text'] = text;
-      request.fields['language'] = language;
+
+      request.files.add(
+        await http.MultipartFile.fromPath('audio_file', audioFilePath),
+      );
 
       print('Sending request to server...');
       var streamedResponse = await request.send();
@@ -315,13 +218,60 @@ ElevatedButton(
 
       if (response.statusCode != 200 && response.statusCode != 201) {
         throw Exception(
-          'Failed to create TTS waypoint. Status: ${response.statusCode}, Body: ${response.body}'
+          'Failed to upload waypoint. Status: ${response.statusCode}, Body: ${response.body}'
         );
       }
 
-      print('✅ TTS Waypoint created successfully');
+      print('Waypoint created successfully');
     } catch (e) {
-      print('❌ Error in createWaypointWithTTS: $e');
+      print('Error in createWaypoint: $e');
+      rethrow;
+    }
+  }
+
+  // New method for creating waypoint without audio (text only for TTS)
+  Future<void> createWaypointWithText({
+    required int tourId,
+    required String name,
+    required double latitude,
+    required double longitude,
+    required String text,
+  }) async {
+    try {
+      print('Creating text-only waypoint for tour $tourId');
+      print('Name: $name');
+      print('Location: $latitude, $longitude');
+      print('Text length: ${text.length} characters');
+
+      final url = '$baseUrl/tours/$tourId/waypoints/text';
+
+      print('POST URL: $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: <String, String>{
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'name': name,
+          'latitude': latitude,
+          'longitude': longitude,
+          'text': text,
+        }),
+      );
+
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception(
+          'Failed to create text waypoint. Status: ${response.statusCode}, Body: ${response.body}'
+        );
+      }
+
+      print('Text waypoint created successfully');
+    } catch (e) {
+      print('Error in createWaypointWithText: $e');
       rethrow;
     }
   }
@@ -330,9 +280,6 @@ ElevatedButton(
     try {
       print('Deleting tour: $tourId');
 
-      final baseUrl = serverBaseUrl.endsWith('/')
-          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
-          : serverBaseUrl;
       final url = '$baseUrl/tours/$tourId';
 
       print('DELETE URL: $url');
@@ -352,7 +299,6 @@ ElevatedButton(
     }
   }
 }
-
 // --- App Main Widget ---
 
 class TourApp extends StatelessWidget {
