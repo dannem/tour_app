@@ -748,22 +748,28 @@ Future<void> _saveAsCustomTour() async {
     return Scaffold(
       appBar: AppBar(
         title: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Wikipedia Tour'),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(12),
-              ),
+            const Flexible(
               child: Text(
-                _currentLanguage.code.toUpperCase(),
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-              ),
+                'Wikipedia Tour',
+                overflow: TextOverflow.ellipsis,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _currentLanguage.code.toUpperCase(),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
         actions: [
           if (_nearbyArticles.isNotEmpty)
             IconButton(
