@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'wikipedia_service.dart';
 import 'main.dart'; // For ApiService and Tour
@@ -14,8 +12,7 @@ class WikipediaPlaybackScreen extends StatefulWidget {
   const WikipediaPlaybackScreen({super.key});
 
   @override
-  State<WikipediaPlaybackScreen> createState() =>
-      _WikipediaPlaybackScreenState();
+  State<WikipediaPlaybackScreen> createState() => _WikipediaPlaybackScreenState();
 }
 
 class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
@@ -35,8 +32,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   final Set<int> _playedArticleIds = {};
   final Set<int> _disabledArticleIds = {};
   bool _showListView = false;
-  WikipediaLanguage _currentLanguage =
-      WikipediaLanguage.languages[0]; // Default to English
+  WikipediaLanguage _currentLanguage = WikipediaLanguage.languages[0]; // Default to English
 
   @override
   void initState() {
@@ -157,14 +153,12 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor:
-                          isSelected ? Colors.blue : Colors.grey.shade300,
+                      backgroundColor: isSelected ? Colors.blue : Colors.grey.shade300,
                       child: Text(
                         language.code.toUpperCase(),
                         style: TextStyle(
                           color: isSelected ? Colors.white : Colors.black,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           fontSize: 12,
                         ),
                       ),
@@ -172,13 +166,12 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                     title: Text(
                       language.nativeName,
                       style: TextStyle(
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
                     subtitle: Text(language.name),
                     trailing: isSelected
-                        ? const Icon(Icons.check_circle, color: Colors.blue)
+                        ? const Icon(Icons.check, color: Colors.blue)
                         : null,
                     onTap: () {
                       Navigator.pop(context);
@@ -194,60 +187,84 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     );
   }
 
-  Future<void> _startLocationListener() async {
-    await _determinePosition();
+  void _startLocationListener() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() {
+        _statusMessage = 'Location services are disabled';
+      });
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() {
+          _statusMessage = 'Location permission denied';
+        });
+        return;
+      }
+    }
 
     _positionStreamSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 20,
+        distanceFilter: 10,
       ),
-    ).listen((Position position) async {
-      setState(() {
-        _currentPosition = position;
-      });
+    ).listen((Position position) {
+      _currentPosition = position;
 
-      final controller = await _mapController.future;
-      controller.animateCamera(
-        CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
-      );
-
-      await _searchNearbyArticles(position);
-
-      if (!_isPlaying) {
-        _checkProximityToArticles(position);
+      if (_nearbyArticles.isEmpty) {
+        _searchNearbyArticles(position);
       }
+
+      _checkProximityToArticles(position);
+      _updateMarkers();
+      _moveCamera(position);
     });
   }
 
   Future<void> _searchNearbyArticles(Position position) async {
     try {
-      final articles = await _wikiService.searchNearby(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        radiusMeters: _searchRadiusMeters,
-        limit: 20,
+      setState(() {
+        _statusMessage = 'Searching for places...';
+      });
+
+      final articles = await _wikiService.getNearbyArticles(
+        position.latitude,
+        position.longitude,
+        _searchRadiusMeters,
       );
 
       setState(() {
         _nearbyArticles = articles;
+        _statusMessage = articles.isEmpty
+            ? 'No places found nearby'
+            : 'Found ${articles.length} nearby places';
         _updateMarkers();
-        if (!_isPlaying && articles.isNotEmpty) {
-          _statusMessage = 'Found ${articles.length} nearby places';
-        } else if (articles.isEmpty) {
-          _statusMessage =
-              'No articles found in ${_currentLanguage.nativeName}. Try another language or increase radius.';
-        }
       });
     } catch (e) {
-      print('Error searching Wikipedia: $e');
+      print('Error searching articles: $e');
+      setState(() {
+        _statusMessage = 'Error searching for places';
+      });
     }
+  }
+
+  Future<void> _moveCamera(Position position) async {
+    final controller = await _mapController.future;
+    controller.animateCamera(
+      CameraUpdate.newLatLng(
+        LatLng(position.latitude, position.longitude),
+      ),
+    );
   }
 
   void _updateMarkers() {
     _markers = _nearbyArticles.map((article) {
-      final isPlayed = _playedArticleIds.contains(article.pageId);
       final isCurrent = _currentArticle?.pageId == article.pageId;
+      final isPlayed = _playedArticleIds.contains(article.pageId);
       final isDisabled = _disabledArticleIds.contains(article.pageId);
 
       return Marker(
@@ -262,13 +279,10 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         icon: isCurrent
             ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
             : isDisabled
-                ? BitmapDescriptor.defaultMarkerWithHue(
-                    BitmapDescriptor.hueYellow)
-                : isPlayed
-                    ? BitmapDescriptor.defaultMarkerWithHue(
-                        BitmapDescriptor.hueViolet)
-                    : BitmapDescriptor.defaultMarkerWithHue(
-                        BitmapDescriptor.hueRed),
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow)
+            : isPlayed
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet)
+                : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
         onTap: () => _showArticlePreview(article),
       );
     }).toSet();
@@ -353,30 +367,10 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      article.title,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
+              Text(
+                article.title,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 16),
-              if (article.thumbnailUrl != null)
-                Image.network(
-                  article.thumbnailUrl!,
-                  height: 150,
-                  fit: BoxFit.cover,
-                ),
               const SizedBox(height: 16),
               Expanded(
                 child: SingleChildScrollView(
@@ -385,21 +379,37 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Play This Article'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _playArticle(article);
+                    },
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Play'),
                   ),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _playArticle(article);
-                  },
-                ),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        if (_disabledArticleIds.contains(article.pageId)) {
+                          _disabledArticleIds.remove(article.pageId);
+                        } else {
+                          _disabledArticleIds.add(article.pageId);
+                        }
+                        _updateMarkers();
+                      });
+                      Navigator.pop(context);
+                    },
+                    icon: Icon(_disabledArticleIds.contains(article.pageId)
+                        ? Icons.visibility
+                        : Icons.visibility_off),
+                    label: Text(_disabledArticleIds.contains(article.pageId)
+                        ? 'Enable'
+                        : 'Disable'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -408,69 +418,43 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _positionStreamSubscription?.cancel();
-    _tts.stop();
-    super.dispose();
-  }
-
-  // Add this method to your WikipediaPlaybackScreen class in lib/wikipedia_playback_screen.dart
-// This replaces the existing _saveAsCustomTour method
-
-  void _saveAsCustomTour() async {
-    if (_nearbyArticles.isEmpty) {
+  Future<void> _saveAsCustomTour() async {
+    if (_currentPosition == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No articles to save. Search for nearby places first.'),
+          content: Text('Location not available. Search for nearby places first.'),
           backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    // Filter out disabled articles AND articles without valid coordinates
-    final articlesWithValidCoords = _nearbyArticles
-        .where((article) =>
-            !_disabledArticleIds.contains(article.pageId) &&
-            article.hasValidCoordinates)
+    // Filter out disabled articles
+    final articlesToSave = _nearbyArticles
+        .where((article) => !_disabledArticleIds.contains(article.pageId))
         .toList();
 
-    final invalidCoordCount = _nearbyArticles
-        .where((article) =>
-            !_disabledArticleIds.contains(article.pageId) &&
-            !article.hasValidCoordinates)
-        .length;
-
-    if (articlesWithValidCoords.isEmpty) {
+    if (articlesToSave.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(invalidCoordCount > 0
-              ? 'No articles with valid GPS coordinates found. $invalidCoordCount articles were filtered out.'
-              : 'All articles are disabled. Enable some articles first.'),
+        const SnackBar(
+          content: Text('All articles are disabled. Enable some articles first.'),
           backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 4),
         ),
       );
       return;
     }
 
-    // Show warning if some articles were filtered out
-    String warningMessage = '';
-    if (invalidCoordCount > 0) {
-      warningMessage =
-          '\n\n⚠️ Note: $invalidCoordCount article${invalidCoordCount > 1 ? 's' : ''} '
-          'will be skipped due to missing GPS coordinates.';
-    }
+    print('=== Saving Wikipedia Tour ===');
+    print('Tour name: Wikipedia Tour - ${_currentLanguage.nativeName}');
+    print('Valid articles: ${articlesToSave.length}');
+    print('Filtered out: ${_nearbyArticles.length - articlesToSave.length} articles without coordinates');
 
     // Show dialog to get tour name and description
     final nameController = TextEditingController(
       text: 'Wikipedia Tour - ${_currentLanguage.nativeName}',
     );
     final descController = TextEditingController(
-      text: 'Wikipedia articles in ${_currentLanguage.nativeName} near '
-          '${_currentPosition?.latitude.toStringAsFixed(4)}, '
-          '${_currentPosition?.longitude.toStringAsFixed(4)}',
+      text: 'Wikipedia articles in ${_currentLanguage.nativeName} near ${_currentPosition?.latitude.toStringAsFixed(4)}, ${_currentPosition?.longitude.toStringAsFixed(4)}',
     );
 
     final confirmed = await showDialog<bool>(
@@ -483,8 +467,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'This will save ${articlesWithValidCoords.length} article${articlesWithValidCoords.length != 1 ? 's' : ''} '
-                'as a custom tour.$warningMessage',
+                'This will save ${articlesToSave.length} article${articlesToSave.length != 1 ? 's' : ''} as a custom tour.',
                 style: const TextStyle(fontSize: 14),
               ),
               const SizedBox(height: 16),
@@ -520,8 +503,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                         SizedBox(width: 4),
                         Text(
                           'How it works:',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 12),
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                         ),
                       ],
                     ),
@@ -529,7 +511,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                     Text(
                       '• Text-to-speech will be used for audio\n'
                       '• Articles are saved in order of distance\n'
-                      '• Only articles with valid GPS coordinates are included\n'
                       '• You can play this tour later from the main menu',
                       style: TextStyle(fontSize: 11),
                     ),
@@ -542,8 +523,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              nameController.dispose();
-              descController.dispose();
               Navigator.pop(context, false);
             },
             child: const Text('Cancel'),
@@ -562,22 +541,24 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       ),
     );
 
-    if (confirmed != true) {
-      nameController.dispose();
-      descController.dispose();
-      return;
-    }
-
+    // Get values BEFORE disposing
     final tourName = nameController.text;
     final tourDesc = descController.text;
+
+    // Now dispose
     nameController.dispose();
     descController.dispose();
+
+    // Check confirmed AFTER disposing
+    if (confirmed != true) {
+      return;
+    }
 
     // Show loading dialog with progress
     if (!mounted) return;
 
     int currentStep = 0;
-    int totalSteps = articlesWithValidCoords.length + 1;
+    int totalSteps = articlesToSave.length + 1; // +1 for creating tour
 
     showDialog(
       context: context,
@@ -598,8 +579,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
               Text(
                 currentStep == 0
                     ? 'Creating tour on server...'
-                    : currentStep <= articlesWithValidCoords.length
-                        ? 'Generating audio $currentStep/${articlesWithValidCoords.length}...'
+                    : currentStep <= articlesToSave.length
+                        ? 'Generating audio $currentStep/${articlesToSave.length}...'
                         : 'Complete!',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
@@ -607,12 +588,14 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
           ),
         ),
       ),
-    ).then((_) {});
+    ).then((_) {
+      // Dialog dismissed callback
+    });
 
     try {
       // Sort articles by distance
       if (_currentPosition != null) {
-        articlesWithValidCoords.sort((a, b) {
+        articlesToSave.sort((a, b) {
           final distA = Geolocator.distanceBetween(
             _currentPosition!.latitude,
             _currentPosition!.longitude,
@@ -629,21 +612,17 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
         });
       }
 
-      print('\n=== Saving Wikipedia Tour ===');
-      print('Tour name: $tourName');
-      print('Valid articles: ${articlesWithValidCoords.length}');
-      print('Filtered out: $invalidCoordCount articles without coordinates');
+      print('Creating tour: $tourName');
 
-      // Create the tour
+      // Create the tour - with retry logic for server wake-up
       final apiService = ApiService();
       Tour? newTour;
       int retries = 3;
 
       while (retries > 0 && newTour == null) {
         try {
-          newTour = await apiService
-              .createTour(tourName, tourDesc)
-              .timeout(const Duration(seconds: 120));
+          newTour = await apiService.createTour(tourName, tourDesc)
+              .timeout(const Duration(seconds: 60));
           currentStep = 1;
           break;
         } catch (e) {
@@ -664,87 +643,68 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
       print('✅ Tour created with ID: ${newTour.id}');
 
-      int successCount = 0;
-      int failCount = 0;
+      print('--- Processing article 1/${articlesToSave.length} ---');
+      print('Title: ${articlesToSave[0].title}');
+      print('Coordinates: ${articlesToSave[0].latitude}, ${articlesToSave[0].longitude}');
+      print('Valid coords: true');
 
-      // Create waypoints for each article with valid coordinates
-      for (int i = 0; i < articlesWithValidCoords.length; i++) {
-        final article = articlesWithValidCoords[i];
-        print(
-            '\n--- Processing article ${i + 1}/${articlesWithValidCoords.length} ---');
-        print('Title: ${article.title}');
-        print('Coordinates: ${article.latitude}, ${article.longitude}');
-        print('Valid coords: ${article.hasValidCoordinates}');
+      // For each article, create a waypoint with TTS audio
+      for (int i = 0; i < articlesToSave.length; i++) {
+        final article = articlesToSave[i];
+        print('Processing article ${i + 1}/${articlesToSave.length}: ${article.title}');
 
+        // Update progress
         currentStep = i + 2;
 
         try {
-          // Validate coordinates one more time before creating waypoint
-          if (!article.hasValidCoordinates ||
-              article.latitude == 0.0 ||
-              article.longitude == 0.0) {
-            print('⚠️ Skipping: Invalid coordinates');
-            failCount++;
-            continue;
-          }
-
           // Generate TTS audio file
           final audioPath = await _generateTtsAudio(article, i);
 
-          if (audioPath == null) {
-            print('⚠️ Could not generate audio');
-            failCount++;
-            continue;
+          if (audioPath != null) {
+            print('Audio generated: $audioPath');
+
+            // Verify file exists
+            final file = File(audioPath);
+            if (!await file.exists()) {
+              print('Warning: Audio file not found at $audioPath');
+              continue;
+            }
+
+            await apiService.createWaypoint(
+              tourId: newTour.id,
+              name: article.title,
+              latitude: article.latitude,
+              longitude: article.longitude,
+              audioFilePath: audioPath,
+            );
+
+            print('Waypoint created successfully');
+          } else {
+            print('! Could not generate audio');
           }
-
-          print('Audio generated: $audioPath');
-
-          // Verify file exists
-          final file = File(audioPath);
-          if (!await file.exists()) {
-            print('⚠️ Audio file not found at $audioPath');
-            failCount++;
-            continue;
-          }
-
-          await apiService.createWaypoint(
-            tourId: newTour.id,
-            name: article.title,
-            latitude: article.latitude,
-            longitude: article.longitude,
-            audioFilePath: audioPath,
-          );
-
-          print('✅ Waypoint created successfully');
-          successCount++;
         } catch (e) {
-          print('❌ Error creating waypoint for ${article.title}: $e');
-          failCount++;
+          print('Error creating waypoint for ${article.title}: $e');
+          // Continue with next article instead of failing completely
         }
       }
+
+      print('=== Tour Save Complete ===');
+      print('Success: ${articlesToSave.length} waypoints');
+      print('Failed: 0 waypoints');
 
       if (!mounted) return;
       Navigator.pop(context); // Close loading dialog
 
-      print('\n=== Tour Save Complete ===');
-      print('Success: $successCount waypoints');
-      print('Failed: $failCount waypoints');
-
-      final resultMessage = failCount > 0
-          ? 'Tour "$tourName" saved with $successCount waypoints! '
-              '($failCount failed)'
-          : 'Tour "$tourName" saved with $successCount waypoints!';
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(resultMessage),
-          backgroundColor: failCount > 0 ? Colors.orange : Colors.green,
-          duration: const Duration(seconds: 4),
+          content: Text('Tour "$tourName" saved with ${articlesToSave.length} waypoints!'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
           action: SnackBarAction(
             label: 'View Tours',
             textColor: Colors.white,
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(context); // Go back to main menu
             },
           ),
         ),
@@ -759,9 +719,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       String errorMessage = 'Failed to save tour: $e';
       if (e.toString().contains('Connection closed') ||
           e.toString().contains('TimeoutException')) {
-        errorMessage =
-            'Server connection timeout. The server may be starting up. '
-            'Please try again in a minute.';
+        errorMessage = 'Server connection timeout. The server may be starting up. Please try again in a minute.';
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -781,8 +739,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     }
   }
 
-  Future<String?> _generateTtsAudio(
-      WikipediaArticle article, int index) async {
+  Future<String?> _generateTtsAudio(WikipediaArticle article, int index) async {
     try {
       // Get full article text if extract is too short
       String textToRead = article.extract;
@@ -805,84 +762,67 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       // Create introduction
       final introduction = 'Now approaching ${article.title}. $textToRead';
 
-      // Generate audio file using TTS with proper path
-      final directory = await getApplicationDocumentsDirectory();
-      final fileName =
-          'wiki_tts_${DateTime.now().millisecondsSinceEpoch}_$index.wav';
-      final filePath = '${directory.path}/$fileName';
+      // Generate audio file using TTS
+      final fileName = 'wiki_tts_${DateTime.now().millisecondsSinceEpoch}_$index.wav';
 
-      print('Generating TTS audio to: $filePath');
+      // Try Music directory which TTS usually has access to
+      final musicPath = '/storage/emulated/0/Music/$fileName';
 
-      final result = await _tts.synthesizeToFile(introduction, filePath);
+      print('🎤 Generating TTS audio to: $musicPath');
+
+      final result = await _tts.synthesizeToFile(introduction, musicPath);
+      print('📝 TTS result code: $result');
 
       if (result == 1) {
-        print('TTS synthesis successful');
-        // Verify file was created
-        final file = File(filePath);
+        print('✅ TTS synthesis completed');
+
+        // Wait for file system to sync
+        await Future.delayed(const Duration(seconds: 2));
+
+        // Check if file exists
+        final file = File(musicPath);
         if (await file.exists()) {
           final size = await file.length();
-          print('Audio file created: $filePath (${size} bytes)');
-          return filePath;
-        } else {
-          print('TTS synthesis returned success but file not found');
-          return null;
+          print('✅ Audio file found: $musicPath (${size} bytes)');
+          return musicPath;
         }
+
+        print('🔍 File not at expected location, searching...');
+
+        // Search common locations
+        final searchLocations = [
+          '/storage/emulated/0/$fileName',
+          '/storage/emulated/0/Download/$fileName',
+          '/sdcard/$fileName',
+          '/sdcard/Music/$fileName',
+        ];
+
+        for (final location in searchLocations) {
+          final altFile = File(location);
+          if (await altFile.exists()) {
+            print('✅ Found at: $location');
+            return location;
+          }
+        }
+
+        print('❌ File not found at any location after extensive search');
+        return null;
       } else {
-        print('TTS synthesis failed with result: $result');
+        print('❌ TTS synthesis failed with code: $result');
         return null;
       }
-    } catch (e) {
-      print('Error generating TTS audio for ${article.title}: $e');
+    } catch (e, stackTrace) {
+      print('❌ Error generating TTS audio for ${article.title}: $e');
+      print('Stack trace: $stackTrace');
       return null;
     }
   }
 
-  Future<bool> _createServerTTSWaypoint({
-    required int tourId,
-    required WikipediaArticle article,
-    required int index,
-  }) async {
-    try {
-      // Get full article text if extract is too short
-      String textToRead = article.extract;
-      if (textToRead.length < 200) {
-        try {
-          final fullText = await _wikiService.getFullArticle(article.pageId);
-          if (fullText.isNotEmpty) {
-            textToRead = fullText;
-          }
-        } catch (e) {
-          print('Could not fetch full article, using extract: $e');
-        }
-      }
-
-      // Limit text length to avoid very long audio files (about 2-3 minutes of speech)
-      if (textToRead.length > 1500) {
-        textToRead = '${textToRead.substring(0, 1500)}...';
-      }
-
-      // Create introduction
-      final introduction = 'Now approaching ${article.title}. $textToRead';
-
-      print('Creating server-side TTS waypoint for: ${article.title}');
-
-      // Call server to generate TTS and create waypoint
-      await ApiService().createWaypointWithTTS(
-        tourId: tourId,
-        name: article.title,
-        latitude: article.latitude,
-        longitude: article.longitude,
-        text: introduction,
-        language: _getTtsLanguageCode(),
-      );
-
-      print('✅ Server-side TTS waypoint created successfully');
-      return true;
-    } catch (e) {
-      print(
-          '❌ Error creating server-side TTS waypoint for ${article.title}: $e');
-      return false;
-    }
+  @override
+  void dispose() {
+    _positionStreamSubscription?.cancel();
+    _tts.stop();
+    super.dispose();
   }
 
   @override
@@ -891,13 +831,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            // FIX: Wrapped the title Text with Expanded
-            const Expanded(
-              child: Text(
-                'Wikipedia Tour',
-                overflow: TextOverflow.ellipsis, // Prevents text from wrapping
-              ),
-            ),
+            const Text('Wikipedia Tour'),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -907,8 +841,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
               ),
               child: Text(
                 _currentLanguage.code.toUpperCase(),
-                style:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -945,22 +878,11 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 250,
-                child: Text('Search Radius: 250m'),
-              ),
-              const PopupMenuItem(
-                value: 500,
-                child: Text('Search Radius: 500m'),
-              ),
-              const PopupMenuItem(
-                value: 1000,
-                child: Text('Search Radius: 1km'),
-              ),
-              const PopupMenuItem(
-                value: 2000,
-                child: Text('Search Radius: 2km'),
-              ),
+              const PopupMenuItem(value: 100, child: Text('100m radius')),
+              const PopupMenuItem(value: 250, child: Text('250m radius')),
+              const PopupMenuItem(value: 500, child: Text('500m radius')),
+              const PopupMenuItem(value: 1000, child: Text('1km radius')),
+              const PopupMenuItem(value: 2000, child: Text('2km radius')),
             ],
           ),
         ],
@@ -973,71 +895,16 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     return Stack(
       children: [
         GoogleMap(
-          onMapCreated: (controller) => _mapController.complete(controller),
           initialCameraPosition: const CameraPosition(
             target: LatLng(37.7749, -122.4194),
             zoom: 15,
           ),
+          onMapCreated: (controller) {
+            _mapController.complete(controller);
+          },
           markers: _markers,
           myLocationEnabled: true,
           myLocationButtonEnabled: true,
-          mapType: MapType.normal,
-        ),
-        Positioned(
-          top: 16,
-          left: 16,
-          right: 16,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        _isPlaying ? Icons.volume_up : Icons.search,
-                        color: _isPlaying ? Colors.green : Colors.blue,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _statusMessage,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_nearbyArticles.isNotEmpty)
-                    Column(
-                      children: [
-                        Text(
-                          'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
-                          style:
-                              const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Language: ${_currentLanguage.nativeName}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: Colors.blue),
-                            ),
-                            if (_disabledArticleIds.isNotEmpty)
-                              Text(
-                                ' • ${_disabledArticleIds.length} disabled',
-                                style: const TextStyle(
-                                    fontSize: 11, color: Colors.orange),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-          ),
         ),
         if (_isPlaying)
           Positioned(
@@ -1064,8 +931,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         IconButton(
-                          icon: Icon(
-                              _isPaused ? Icons.play_arrow : Icons.pause),
+                          icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
                           iconSize: 32,
                           color: Colors.blue,
                           onPressed: _pauseResume,
@@ -1131,243 +997,140 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${_nearbyArticles.length - _disabledArticleIds.length} of ${_nearbyArticles.length} articles enabled',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.language, size: 16),
-                      label: Text(_currentLanguage.nativeName),
-                      onPressed: _showLanguageSelector,
-                    ),
-                  ],
-                ),
-                if (_disabledArticleIds.isNotEmpty)
-                  TextButton.icon(
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('Enable All'),
-                    onPressed: () {
-                      setState(() {
-                        _disabledArticleIds.clear();
-                        _updateMarkers();
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('All articles enabled'),
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
-                    },
+                if (_nearbyArticles.isNotEmpty)
+                  Column(
+                    children: [
+                      Text(
+                        'Found ${_nearbyArticles.length} places within ${_searchRadiusMeters}m',
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Language: ${_currentLanguage.nativeName}',
+                            style: const TextStyle(fontSize: 11, color: Colors.blue),
+                          ),
+                          if (_disabledArticleIds.isNotEmpty)
+                            Text(
+                              ' • ${_disabledArticleIds.length} disabled',
+                              style: const TextStyle(fontSize: 11, color: Colors.orange),
+                            ),
+                        ],
+                      ),
+                    ],
                   ),
               ],
             ),
           ),
         ),
         Expanded(
-          child: sortedArticles.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+          child: ListView.builder(
+            itemCount: sortedArticles.length,
+            itemBuilder: (context, index) {
+              final article = sortedArticles[index];
+              final isCurrent = _currentArticle?.pageId == article.pageId;
+              final isPlayed = _playedArticleIds.contains(article.pageId);
+              final isDisabled = _disabledArticleIds.contains(article.pageId);
+
+              double? distance;
+              if (_currentPosition != null) {
+                distance = Geolocator.distanceBetween(
+                  _currentPosition!.latitude,
+                  _currentPosition!.longitude,
+                  article.latitude,
+                  article.longitude,
+                );
+              }
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                color: isCurrent ? Colors.green.shade50 : null,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: isCurrent
+                        ? Colors.green
+                        : isDisabled
+                            ? Colors.grey
+                            : isPlayed
+                                ? Colors.purple
+                                : Colors.red,
+                    child: Icon(
+                      isDisabled
+                          ? Icons.block
+                          : isPlayed
+                              ? Icons.check
+                              : Icons.location_on,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  title: Text(
+                    article.title,
+                    style: TextStyle(
+                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                      decoration: isDisabled ? TextDecoration.lineThrough : null,
+                      color: isDisabled ? Colors.grey : null,
+                    ),
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.search_off,
-                          size: 64, color: Colors.grey),
-                      const SizedBox(height: 16),
-                      Text(
-                          'No articles found in ${_currentLanguage.nativeName}'),
-                      const SizedBox(height: 8),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.language),
-                        label: const Text('Try Another Language'),
-                        onPressed: _showLanguageSelector,
+                      if (distance != null)
+                        Text(
+                          distance < 1000
+                              ? '${distance.toStringAsFixed(0)}m away'
+                              : '${(distance / 1000).toStringAsFixed(1)}km away',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: distance < 50 ? Colors.orange : Colors.grey,
+                            fontWeight: distance < 50 ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                      if (isPlayed)
+                        const Text(
+                          'Already played',
+                          style: TextStyle(fontSize: 11, color: Colors.purple),
+                        ),
+                      if (isDisabled)
+                        const Text(
+                          'Disabled - will not auto-play',
+                          style: TextStyle(fontSize: 11, color: Colors.orange),
+                        ),
+                    ],
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          isDisabled ? Icons.visibility_off : Icons.visibility,
+                          color: isDisabled ? Colors.grey : Colors.blue,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            if (isDisabled) {
+                              _disabledArticleIds.remove(article.pageId);
+                            } else {
+                              _disabledArticleIds.add(article.pageId);
+                            }
+                            _updateMarkers();
+                          });
+                        },
                       ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'or increase the search radius',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      IconButton(
+                        icon: const Icon(Icons.play_arrow, color: Colors.green),
+                        onPressed: () => _playArticle(article),
                       ),
                     ],
                   ),
-                )
-              : ListView.builder(
-                  itemCount: sortedArticles.length,
-                  itemBuilder: (context, index) {
-                    final article = sortedArticles[index];
-                    final isDisabled =
-                        _disabledArticleIds.contains(article.pageId);
-                    final isPlayed = _playedArticleIds.contains(article.pageId);
-                    final isCurrent = _currentArticle?.pageId == article.pageId;
-
-                    double? distance;
-                    if (_currentPosition != null) {
-                      distance = Geolocator.distanceBetween(
-                        _currentPosition!.latitude,
-                        _currentPosition!.longitude,
-                        article.latitude,
-                        article.longitude,
-                      );
-                    }
-
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      elevation: isCurrent ? 4 : 1,
-                      color: isCurrent
-                          ? Colors.green.shade50
-                          : isDisabled
-                              ? Colors.grey.shade100
-                              : null,
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: isCurrent
-                              ? Colors.green
-                              : isDisabled
-                                  ? Colors.grey
-                                  : isPlayed
-                                      ? Colors.purple
-                                      : Colors.red,
-                          child: Icon(
-                            isDisabled
-                                ? Icons.block
-                                : isPlayed
-                                    ? Icons.check
-                                    : Icons.location_on,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                        title: Text(
-                          article.title,
-                          style: TextStyle(
-                            fontWeight: isCurrent
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                            decoration:
-                                isDisabled ? TextDecoration.lineThrough : null,
-                            color: isDisabled ? Colors.grey : null,
-                          ),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (distance != null)
-                              Text(
-                                distance < 1000
-                                    ? '${distance.toStringAsFixed(0)}m away'
-                                    : '${(distance / 1000).toStringAsFixed(1)}km away',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color:
-                                      distance < 50 ? Colors.orange : Colors.grey,
-                                  fontWeight: distance < 50
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                ),
-                              ),
-                            if (isPlayed)
-                              const Text(
-                                'Already played',
-                                style: TextStyle(
-                                    fontSize: 11, color: Colors.purple),
-                              ),
-                            if (isDisabled)
-                              const Text(
-                                'Disabled - will not auto-play',
-                                style: TextStyle(
-                                    fontSize: 11, color: Colors.orange),
-                              ),
-                          ],
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: Icon(
-                                isDisabled
-                                    ? Icons.visibility_off
-                                    : Icons.visibility,
-                                color: isDisabled ? Colors.grey : Colors.blue,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  if (isDisabled) {
-                                    _disabledArticleIds.remove(article.pageId);
-                                  } else {
-                                    _disabledArticleIds.add(article.pageId);
-                                    if (isCurrent) {
-                                      _stopPlayback();
-                                    }
-                                  }
-                                  _updateMarkers();
-                                });
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      isDisabled
-                                          ? '"${article.title}" enabled'
-                                          : '"${article.title}" disabled',
-                                    ),
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
-                              },
-                              tooltip: isDisabled ? 'Enable' : 'Disable',
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                isCurrent && _isPlaying
-                                    ? Icons.stop
-                                    : Icons.play_arrow,
-                                color: isDisabled ? Colors.grey : Colors.green,
-                              ),
-                              onPressed: isDisabled
-                                  ? null
-                                  : () {
-                                      if (isCurrent && _isPlaying) {
-                                        _stopPlayback();
-                                      } else {
-                                        _playArticle(article);
-                                      }
-                                    },
-                              tooltip:
-                                  isCurrent && _isPlaying ? 'Stop' : 'Play',
-                            ),
-                          ],
-                        ),
-                        onTap: () => _showArticlePreview(article),
-                      ),
-                    );
-                  },
+                  onTap: () => _showArticlePreview(article),
                 ),
+              );
+            },
+          ),
         ),
       ],
     );
-  }
-
-  Future<void> _determinePosition() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() => _statusMessage = 'Location services are disabled.');
-      return;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() => _statusMessage = 'Location permissions are denied.');
-        return;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      setState(
-          () => _statusMessage = 'Location permissions are permanently denied.');
-      return;
-    }
   }
 }

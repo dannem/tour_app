@@ -111,6 +111,70 @@ class ApiService {
     }
   }
 
+  // Add this diagnostic method to your ApiService class in main.dart
+
+Future<bool> testServerConnection() async {
+  print('🔍 Testing server connection...');
+  print('📍 Server URL: $serverBaseUrl');
+
+  try {
+    // Test 1: Simple GET request to root
+    print('Test 1: Connecting to root endpoint...');
+    final response = await http.get(
+      Uri.parse('$serverBaseUrl/'),
+    ).timeout(const Duration(seconds: 10));
+
+    print('✅ Connection successful!');
+    print('Status: ${response.statusCode}');
+    print('Response: ${response.body}');
+
+    if (response.statusCode == 200) {
+      // Test 2: Check /tours endpoint
+      print('\nTest 2: Checking /tours endpoint...');
+      final toursResponse = await http.get(
+        Uri.parse('$serverBaseUrl/tours/'),
+      ).timeout(const Duration(seconds: 10));
+
+      print('✅ Tours endpoint accessible');
+      print('Status: ${toursResponse.statusCode}');
+
+      return true;
+    }
+
+    return false;
+  } on SocketException catch (e) {
+    print('❌ Socket Exception: ${e.message}');
+    print('   This usually means:');
+    print('   1. Server URL is incorrect');
+    print('   2. Server is down/sleeping');
+    print('   3. No internet connection');
+    print('   4. DNS resolution failed');
+    return false;
+  } on TimeoutException catch (e) {
+    print('❌ Timeout: Server took too long to respond');
+    print('   Server might be waking up (Render free tier)');
+    print('   Wait 30-60 seconds and try again');
+    return false;
+  } on http.ClientException catch (e) {
+    print('❌ Client Exception: $e');
+    return false;
+  } catch (e) {
+    print('❌ Unexpected error: $e');
+    return false;
+  }
+}
+
+// Add this button to your main menu to test the connection
+// Example usage in a widget:
+/*
+ElevatedButton(
+  onPressed: () async {
+    final apiService = ApiService();
+    await apiService.testServerConnection();
+  },
+  child: const Text('Test Server Connection'),
+)
+*/
   Future<Tour> fetchTourDetails(int tourId) async {
     try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/$tourId'));
