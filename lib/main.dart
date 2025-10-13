@@ -88,14 +88,8 @@ class Tour {
   }
 }
 
-class ApiService {
-  // Add baseUrl as a getter to the class
-  String get baseUrl {
-    return serverBaseUrl.endsWith('/')
-        ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
-        : serverBaseUrl;
-  }
 
+class ApiService {
   Future<List<Tour>> fetchTours() async {
     try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/'));
@@ -196,6 +190,10 @@ class ApiService {
       final fileSize = await file.length();
       print('File exists, size: $fileSize bytes');
 
+      // Remove trailing slash if present, construct proper URL
+      final baseUrl = serverBaseUrl.endsWith('/')
+          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+          : serverBaseUrl;
       final url = '$baseUrl/tours/$tourId/waypoints';
 
       print('POST URL: $url');
@@ -230,7 +228,8 @@ class ApiService {
     }
   }
 
-  // New method for creating waypoint without audio (text only for TTS)
+  /// NEW METHOD: Create a waypoint with text content instead of audio file
+  /// This is used for Wikipedia articles where TTS audio will be generated on client side
   Future<void> createWaypointWithText({
     required int tourId,
     required String name,
@@ -244,22 +243,25 @@ class ApiService {
       print('Location: $latitude, $longitude');
       print('Text length: ${text.length} characters');
 
+      // Remove trailing slash if present, construct proper URL
+      final baseUrl = serverBaseUrl.endsWith('/')
+          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+          : serverBaseUrl;
       final url = '$baseUrl/tours/$tourId/waypoints/text';
 
       print('POST URL: $url');
 
-      final response = await http.post(
-        Uri.parse(url),
-        headers: <String, String>{
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-        body: jsonEncode(<String, dynamic>{
-          'name': name,
-          'latitude': latitude,
-          'longitude': longitude,
-          'text': text,
-        }),
-      );
+      // Use form data for consistency with other endpoints
+      var request = http.MultipartRequest('POST', Uri.parse(url));
+
+      request.fields['name'] = name;
+      request.fields['latitude'] = latitude.toString();
+      request.fields['longitude'] = longitude.toString();
+      request.fields['text'] = text;
+
+      print('Sending request to server...');
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
 
       print('Response status: ${response.statusCode}');
       print('Response body: ${response.body}');
@@ -281,6 +283,9 @@ class ApiService {
     try {
       print('Deleting tour: $tourId');
 
+      final baseUrl = serverBaseUrl.endsWith('/')
+          ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
+          : serverBaseUrl;
       final url = '$baseUrl/tours/$tourId';
 
       print('DELETE URL: $url');
@@ -300,10 +305,6 @@ class ApiService {
     }
   }
 }
-
-// NOTE: The rest of the file (TourApp, ChoiceScreen, TourListScreen, etc.)
-// remains unchanged from the original. Only the ApiService class has been modified.
-// Add the remaining classes from your original main.dart file below this comment.
 
 class TourApp extends StatelessWidget {
   const TourApp({super.key});
