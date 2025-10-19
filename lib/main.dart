@@ -576,59 +576,69 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
       text: 'A tour recorded on ${DateFormat.yMMMd().format(DateTime.now())}'
     );
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Add Description & Save'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Tour Name: ${widget.tourName}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Add Description & Save'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.5,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tour Name: ${widget.tourName}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: descriptionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Tour Description',
+                      hintText: 'Enter a description for your tour',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 3,
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: descriptionController,
-                decoration: const InputDecoration(
-                  labelText: 'Tour Description',
-                  hintText: 'Enter a description for your tour',
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 3,
-              ),
-            ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                print('Save dialog cancelled');
-                descriptionController.dispose();
-                Navigator.pop(context);
-              },
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                print('Save button pressed in dialog');
-                final desc = descriptionController.text.isEmpty
-                    ? 'No description provided'
-                    : descriptionController.text;
-                print('Description: $desc');
-                descriptionController.dispose();
-                Navigator.pop(context);
-                _uploadTour(desc);
-              },
-              child: const Text('Save Tour'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              print('Save dialog cancelled');
+              descriptionController.dispose();
+              Navigator.pop(context);
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              print('Save button pressed in dialog');
+              final desc = descriptionController.text.isEmpty
+                  ? 'No description provided'
+                  : descriptionController.text;
+              print('Description: $desc');
+              descriptionController.dispose();
+              Navigator.pop(context);
+              _uploadTour(desc);
+            },
+            child: const Text('Save Tour'),
+          ),
+        ],
+      );
+    },
+  );
+}
 
   void _uploadTour(String description) async {
     print('=== _uploadTour called ===');

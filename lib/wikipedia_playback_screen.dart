@@ -447,93 +447,31 @@ Future<void> _saveAsCustomTour() async {
     text: 'Discover ${articlesToSave.length} interesting places near you',
   );
 
+
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Save Wikipedia Tour'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Tour Name',
-                border: OutlineInputBorder(),
-              ),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.6,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ... content ...
+              ],
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: descController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
-                      const SizedBox(width: 4),
-                      Text(
-                        'How it works:',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          color: Colors.blue.shade700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '• Text-to-speech will be used for audio\n'
-                    '• No audio files will be uploaded (faster!)\n'
-                    '• Audio generated on-the-fly when playing\n'
-                    '• Articles saved in order of distance\n'
-                    '• Language: ${_currentLanguage.nativeName}',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            nameController.dispose();
-            descController.dispose();
-            Navigator.pop(context, false);
-          },
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: () {
-            Navigator.pop(context, true);
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Save Tour'),
-        ),
-      ],
+      actions: [ /* ... */ ],
     ),
   );
-
   if (confirmed != true) {
     nameController.dispose();
     descController.dispose();

@@ -7,6 +7,7 @@
         android:label="tour_app"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        android:enableOnBackInvokedCallback="true"
 
         <meta-data android:name="com.google.android.geo.API_KEY"
                    android:value="AIzaSyA7FT6V6wg9CZqdjDOLtE9VB-739yFx23s"/>
