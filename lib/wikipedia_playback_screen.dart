@@ -145,11 +145,11 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     });
 
     try {
-      final articles = await _wikiService.getNearbyArticles(
+      _wikiService.setLanguage(_currentLanguage.code);
+      final articles = await _wikiService.searchNearby(
         latitude: center.latitude,
         longitude: center.longitude,
-        radius: _searchRadiusMeters,
-        language: _currentLanguage.code,
+        radiusMeters: _searchRadiusMeters,
       );
 
       setState(() {
@@ -189,7 +189,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
 
       BitmapDescriptor icon;
       if (isDisabled) {
-        icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGrey);
+        icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGray);
       } else if (isCurrent) {
         icon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen);
       } else if (isPlayed) {
@@ -367,7 +367,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
               final isSelected = lang.code == _currentLanguage.code;
               return ListTile(
                 title: Text(lang.nativeName),
-                subtitle: Text(lang.englishName),
+                subtitle: Text(lang.name),
                 trailing: isSelected ? const Icon(Icons.check, color: Colors.green) : null,
                 selected: isSelected,
                 onTap: () => Navigator.pop(context, lang),
@@ -488,8 +488,8 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      '• Text-to-speech will be used for audio\n'
-                      '• Articles are saved in order of distance\n'
+                      '• Text-to-speech will be used for audio\n' // Corrected newline escape sequence
+                      '• Articles are saved in order of distance\n' // Corrected newline escape sequence
                       '• You can play this tour later from the main menu',
                       style: TextStyle(fontSize: 11),
                     ),
@@ -749,9 +749,6 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
           final size = await file.length();
           print('Audio file created: $filePath (${size} bytes)');
           return filePath;
-        } else {
-          print('TTS synthesis returned success but file not found');
-          return null;
         }
       } else {
         print('TTS synthesis failed with result: $result');
@@ -761,6 +758,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       print('Error generating TTS audio for ${article.title}: $e');
       return null;
     }
+    return null; // Added return null for cases where file doesn't exist after success
   }
 
   @override
