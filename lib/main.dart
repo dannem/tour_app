@@ -12,7 +12,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'wikipedia_playback_screen.dart';
-import 'create_wikipedia_tour_screen.dart';
+import 'wikipedia_location_selector.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -389,7 +389,7 @@ class ChoiceScreen extends StatelessWidget {
                     Text('Wikipedia Tour', style: TextStyle(fontSize: 18)),
                     SizedBox(height: 4),
                     Text(
-                      'Hear about nearby places from Wikipedia',
+                      'Find Wikipedia articles at any location',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
                     ),
                   ],
@@ -435,7 +435,7 @@ class ChoiceScreen extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const CreateWikipediaTourScreen(),
+                      builder: (context) => const WikipediaLocationSelector(),
                     ),
                   );
                 },
