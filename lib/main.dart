@@ -11,6 +11,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'wikipedia_location_selector.dart';
+import 'storage_preferences.dart';
+import 'local_tour_manager.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -560,6 +562,19 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
   final List<TourPoint> _newWaypoints = [];
   bool _isUploading = false;
   String _uploadStatus = '';
+  StorageMode _selectedStorageMode = StorageMode.server; // Storage selection
+  @override
+  void initState() {
+    super.initState();
+    _loadStoragePreference();
+  }
+
+  Future<void> _loadStoragePreference() async {
+    final savedMode = await StoragePreferences.getStorageMode();
+    setState(() {
+      _selectedStorageMode = savedMode;
+    });
+  }
 
   void _finishAndSaveTour() {
     print('=== _finishAndSaveTour called ===');
@@ -580,71 +595,235 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
       text: 'A tour recorded on ${DateFormat.yMMMd().format(DateTime.now())}'
     );
 
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) {
-      return AlertDialog(
-        title: const Text('Add Description & Save'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.5,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Tour Name: ${widget.tourName}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(  // CHANGED: Wrap in StatefulBuilder
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Add Description & Save'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.7,  // CHANGED: 0.7 instead of 0.5
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tour Name: ${widget.tourName}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Tour Description',
+                          hintText: 'Enter a description for your tour',
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 3,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // NEW: Storage selection UI starts here
+                      const Text(
+                        'Storage Location:',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            RadioListTile<StorageMode>(
+                              title: const Row(
+                                children: [
+                                  Icon(Icons.phone_android, size: 20, color: Colors.blue),
+                                  SizedBox(width: 8),
+                                  Text('Save Locally on Device'),
+                                ],
+                              ),
+                              subtitle: const Text(
+                                '• Private to you\n• No internet required to play\n• Uses device storage',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                              value: StorageMode.local,
+                              groupValue: _selectedStorageMode,
+                              onChanged: (StorageMode? value) {
+                                setDialogState(() {
+                                  setState(() {
+                                    _selectedStorageMode = value!;
+                                  });
+                                });
+                              },
+                            ),
+                            Divider(height: 1, color: Colors.grey.shade300),
+                            RadioListTile<StorageMode>(
+                              title: const Row(
+                                children: [
+                                  Icon(Icons.cloud_upload, size: 20, color: Colors.green),
+                                  SizedBox(width: 8),
+                                  Text('Upload to Server'),
+                                ],
+                              ),
+                              subtitle: const Text(
+                                '• Accessible from any device\n• Can be shared with others\n• Requires internet',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                              value: StorageMode.server,
+                              groupValue: _selectedStorageMode,
+                              onChanged: (StorageMode? value) {
+                                setDialogState(() {
+                                  setState(() {
+                                    _selectedStorageMode = value!;
+                                  });
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      // NEW: Storage selection UI ends here
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: descriptionController,
-                    decoration: const InputDecoration(
-                      labelText: 'Tour Description',
-                      hintText: 'Enter a description for your tour',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 3,
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              print('Save dialog cancelled');
-              descriptionController.dispose();
-              Navigator.pop(context);
-            },
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              print('Save button pressed in dialog');
-              final desc = descriptionController.text.isEmpty
-                  ? 'No description provided'
-                  : descriptionController.text;
-              print('Description: $desc');
-              descriptionController.dispose();
-              Navigator.pop(context);
-              _uploadTour(desc);
-            },
-            child: const Text('Save Tour'),
-          ),
-        ],
-      );
-    },
-  );
-}
+            actions: [
+              TextButton(
+                onPressed: () {
+                  print('Save dialog cancelled');
+                  descriptionController.dispose();
+                  Navigator.pop(context);
+                },
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {  // CHANGED: Made async
+                  print('Save button pressed in dialog');
+                  final desc = descriptionController.text.isEmpty
+                      ? 'No description provided'
+                      : descriptionController.text;
+                  print('Description: $desc');
+                  descriptionController.dispose();
+                  Navigator.pop(context);
 
-  void _uploadTour(String description) async {
+                  // NEW: Save storage preference
+                  await StoragePreferences.setStorageMode(_selectedStorageMode);
+
+                  // NEW: Route to appropriate save method
+                  if (_selectedStorageMode == StorageMode.local) {
+                    _saveTourLocally(desc);
+                  } else {
+                    _uploadTourToServer(desc);
+                  }
+                },
+                style: ElevatedButton.styleFrom(  // NEW: Dynamic button styling
+                  backgroundColor: _selectedStorageMode == StorageMode.local
+                      ? Colors.blue
+                      : Colors.green,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(_selectedStorageMode == StorageMode.local   // NEW: Dynamic button text
+                    ? 'Save Locally'
+                    : 'Upload to Server'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+Future<void> _saveTourLocally(String description) async {
+    print('=== Saving tour locally ===');
+    print('Tour name: ${widget.tourName}');
+    print('Description: $description');
+    print('Number of waypoints: ${_newWaypoints.length}');
+
+    setState(() {
+      _isUploading = true;
+      _uploadStatus = 'Saving tour locally...';
+    });
+
+    try {
+      final localManager = LocalTourManager();
+
+      // Convert TourPoint objects to LocalTourWaypoint objects
+      final waypoints = _newWaypoints.map((point) {
+        return LocalTourWaypoint(
+          name: point.name ?? 'Unnamed Waypoint',
+          latitude: point.latitude,
+          longitude: point.longitude,
+          audioPath: point.localAudioPath,
+        );
+      }).toList();
+
+      await localManager.saveTour(
+        name: widget.tourName,
+        description: description,
+        waypoints: waypoints,
+      );
+
+      setState(() {
+        _uploadStatus = 'Tour saved locally!';
+        _isUploading = false;
+      });
+
+      print('=== Tour saved locally successfully ===');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('Tour "${widget.tourName}" saved locally! ✓'),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.blue,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
+      // Navigate back to the main screen
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    } catch (e, stackTrace) {
+      print('❌ ERROR saving locally: $e');
+      print('Stack trace: $stackTrace');
+
+      setState(() {
+        _uploadStatus = 'Error: ${e.toString()}';
+        _isUploading = false;
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save locally: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  void _uploadTourToServer(String description) async {
     print('=== _uploadTour called ===');
     print('Description: $description');
     print('Number of waypoints to upload: ${_newWaypoints.length}');

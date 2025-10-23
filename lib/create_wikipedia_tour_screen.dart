@@ -1,3 +1,4 @@
+// File: lib/create_wikipedia_tour_screen.dart
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -8,6 +9,8 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'wikipedia_service.dart';
 import 'main.dart';
+import 'storage_preferences.dart';
+import 'local_tour_manager.dart';
 
 enum LocationMethod { gps, address, map }
 
@@ -32,6 +35,7 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
   bool _isLoadingLocation = false;
   int _searchRadiusMeters = 1000;
   WikipediaLanguage _currentLanguage = WikipediaLanguage.languages[0];
+  StorageMode _selectedStorageMode = StorageMode.server; // NEW: Track selected storage mode
 
   final Completer<GoogleMapController> _mapController = Completer();
   LatLng? _selectedMapLocation;
@@ -41,6 +45,15 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
   void initState() {
     super.initState();
     _initializeTts();
+    _loadStoragePreference(); // NEW: Load user's saved preference
+  }
+
+  // NEW: Load the user's saved storage preference
+  Future<void> _loadStoragePreference() async {
+    final savedMode = await StoragePreferences.getStorageMode();
+    setState(() {
+      _selectedStorageMode = savedMode;
+    });
   }
 
   Future<void> _initializeTts() async {
@@ -112,42 +125,30 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
         return;
       }
 
-      _position = await Geolocator.getCurrentPosition(
+      Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // Try to get address from coordinates
-      try {
-        List<Placemark> placemarks = await placemarkFromCoordinates(
-          _position!.latitude,
-          _position!.longitude,
-        );
-
-        if (placemarks.isNotEmpty) {
-          final placemark = placemarks.first;
-          String address = [
-            placemark.street,
-            placemark.locality,
-            placemark.administrativeArea,
-          ].where((e) => e != null && e.isNotEmpty).join(', ');
-
-          if (address.isNotEmpty) {
-            _nameController.text = 'Wikipedia Tour - $address';
-          } else {
-            _nameController.text = 'Wikipedia Tour at ${_position!.latitude.toStringAsFixed(4)}, ${_position!.longitude.toStringAsFixed(4)}';
-          }
-        }
-      } catch (e) {
-        _nameController.text = 'Wikipedia Tour at ${_position!.latitude.toStringAsFixed(4)}, ${_position!.longitude.toStringAsFixed(4)}';
-      }
-
       setState(() {
-        _status = 'Location found! Ready to create tour.';
+        _position = position;
+        _status = 'Location found: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
         _isLoadingLocation = false;
       });
+
+      // Move map camera if map is being used
+      if (_locationMethod == LocationMethod.map) {
+        final controller = await _mapController.future;
+        controller.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            LatLng(position.latitude, position.longitude),
+            15,
+          ),
+        );
+        _updateMarker(position.latitude, position.longitude);
+      }
     } catch (e) {
       setState(() {
-        _status = 'Could not get location. Try using address or map instead.';
+        _status = 'Error getting location: $e';
         _isLoadingLocation = false;
       });
     }
@@ -174,191 +175,110 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
           _status = 'Address not found. Please try a different address.';
           _isGeocodingAddress = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Address not found. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
-        );
         return;
       }
 
       final location = locations.first;
-      _position = Position(
-        latitude: location.latitude,
-        longitude: location.longitude,
-        timestamp: DateTime.now(),
-        accuracy: 0,
-        altitude: 0,
-        altitudeAccuracy: 0,
-        heading: 0,
-        headingAccuracy: 0,
-        speed: 0,
-        speedAccuracy: 0,
-      );
-
-      _nameController.text = 'Wikipedia Tour - ${_addressController.text}';
-
       setState(() {
-        _status = 'Address found! Ready to create tour.';
+        _position = Position(
+          latitude: location.latitude,
+          longitude: location.longitude,
+          timestamp: DateTime.now(),
+          accuracy: 0,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: 0,
+          headingAccuracy: 0,
+          speed: 0,
+          speedAccuracy: 0,
+        );
+        _status = 'Address found: ${location.latitude.toStringAsFixed(4)}, ${location.longitude.toStringAsFixed(4)}';
         _isGeocodingAddress = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Address found successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      // Move map camera if map is being used
+      if (_locationMethod == LocationMethod.map) {
+        final controller = await _mapController.future;
+        controller.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            LatLng(location.latitude, location.longitude),
+            15,
+          ),
+        );
+        _updateMarker(location.latitude, location.longitude);
+      }
     } catch (e) {
       setState(() {
-        _status = 'Error looking up address: $e';
+        _status = 'Error geocoding address: $e';
         _isGeocodingAddress = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
-  void _onMapTapped(LatLng location) {
+  void _updateMarker(double lat, double lon) {
     setState(() {
-      _selectedMapLocation = location;
-      _position = Position(
-        latitude: location.latitude,
-        longitude: location.longitude,
-        timestamp: DateTime.now(),
-        accuracy: 0,
-        altitude: 0,
-        altitudeAccuracy: 0,
-        heading: 0,
-        headingAccuracy: 0,
-        speed: 0,
-        speedAccuracy: 0,
-      );
+      _selectedMapLocation = LatLng(lat, lon);
       _markers = {
         Marker(
           markerId: const MarkerId('selected_location'),
-          position: location,
-          infoWindow: const InfoWindow(title: 'Selected Location'),
+          position: LatLng(lat, lon),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
         ),
       };
-      _status = 'Location selected on map!';
     });
-
-    // Try to get address for the selected location
-    _getAddressFromCoordinates(location);
   }
 
-  Future<void> _getAddressFromCoordinates(LatLng location) async {
-    try {
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        location.latitude,
-        location.longitude,
+  void _onMapTap(LatLng position) {
+    setState(() {
+      _position = Position(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: DateTime.now(),
+        accuracy: 0,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
       );
-      if (placemarks.isNotEmpty) {
-        final placemark = placemarks.first;
-        String address = [
-          placemark.street,
-          placemark.locality,
-          placemark.administrativeArea,
-        ].where((e) => e != null && e.isNotEmpty).join(', ');
-
-        if (address.isNotEmpty) {
-          _nameController.text = 'Wikipedia Tour - $address';
-        } else {
-          _nameController.text = 'Wikipedia Tour at ${location.latitude.toStringAsFixed(4)}, ${location.longitude.toStringAsFixed(4)}';
-        }
-      }
-    } catch (e) {
-      _nameController.text = 'Wikipedia Tour at ${location.latitude.toStringAsFixed(4)}, ${location.longitude.toStringAsFixed(4)}';
-    }
+      _status = 'Selected location: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
+    });
+    _updateMarker(position.latitude, position.longitude);
   }
 
-  void _showLanguageSelector() {
-    showModalBottomSheet(
+  void _showLanguageSelector() async {
+    final selected = await showDialog<WikipediaLanguage>(
       context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Select Language',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const Divider(),
-            Expanded(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: WikipediaLanguage.languages.length,
-                itemBuilder: (context, index) {
-                  final language = WikipediaLanguage.languages[index];
-                  final isSelected = language.code == _currentLanguage.code;
-
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: isSelected ? Colors.blue : Colors.grey.shade300,
-                      child: Text(
-                        language.code.toUpperCase(),
-                        style: TextStyle(
-                          color: isSelected ? Colors.white : Colors.black,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    title: Text(
-                      language.nativeName,
-                      style: TextStyle(
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    ),
-                    subtitle: Text(language.name),
-                    trailing: isSelected
-                        ? const Icon(Icons.check_circle, color: Colors.blue)
-                        : null,
-                    onTap: () {
-                      Navigator.pop(context);
-                      setState(() {
-                        _currentLanguage = language;
-                        _wikiService.setLanguage(language.code);
-                      });
-                      _tts.setLanguage(_getTtsLanguageCode());
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Language changed to ${language.nativeName}'),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
+      builder: (context) => AlertDialog(
+        title: const Text('Select Language'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: WikipediaLanguage.languages.map((lang) {
+              return ListTile(
+                title: Text(lang.nativeName),
+                subtitle: Text(lang.englishName),
+                trailing: _currentLanguage.code == lang.code
+                    ? const Icon(Icons.check, color: Colors.green)
+                    : null,
+                onTap: () => Navigator.pop(context, lang),
+              );
+            }).toList(),
+          ),
         ),
       ),
     );
+
+    if (selected != null) {
+      setState(() {
+        _currentLanguage = selected;
+      });
+      await _tts.setLanguage(_getTtsLanguageCode());
+    }
   }
 
   void _createTour() async {
-    if (_position == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a location first'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
     if (_nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -428,7 +348,7 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
       if (!mounted) return;
       Navigator.pop(context);
 
-      // Show preview and confirmation dialog
+      // Show preview and confirmation dialog WITH STORAGE SELECTION
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -460,7 +380,68 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
                   ),
                   maxLines: 3,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+
+                // NEW: STORAGE SELECTION UI
+                const Text(
+                  'Storage Location:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      RadioListTile<StorageMode>(
+                        title: const Row(
+                          children: [
+                            Icon(Icons.phone_android, size: 20, color: Colors.blue),
+                            SizedBox(width: 8),
+                            Text('Save Locally on Device'),
+                          ],
+                        ),
+                        subtitle: const Text(
+                          '• Private to you\n• No internet required to play\n• Uses device storage',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: StorageMode.local,
+                        groupValue: _selectedStorageMode,
+                        onChanged: (StorageMode? value) {
+                          setState(() {
+                            _selectedStorageMode = value!;
+                          });
+                        },
+                      ),
+                      Divider(height: 1, color: Colors.grey.shade300),
+                      RadioListTile<StorageMode>(
+                        title: const Row(
+                          children: [
+                            Icon(Icons.cloud_upload, size: 20, color: Colors.green),
+                            SizedBox(width: 8),
+                            Text('Upload to Server'),
+                          ],
+                        ),
+                        subtitle: const Text(
+                          '• Accessible from any device\n• Can be shared with others\n• Requires internet',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: StorageMode.server,
+                        groupValue: _selectedStorageMode,
+                        onChanged: (StorageMode? value) {
+                          setState(() {
+                            _selectedStorageMode = value!;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                // END STORAGE SELECTION UI
+
+                const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
@@ -543,10 +524,14 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: _selectedStorageMode == StorageMode.local
+                    ? Colors.blue
+                    : Colors.green,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Create Tour'),
+              child: Text(_selectedStorageMode == StorageMode.local
+                  ? 'Save Locally'
+                  : 'Upload to Server'),
             ),
           ],
         ),
@@ -559,44 +544,153 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
           ? 'Wikipedia articles near ${_position!.latitude.toStringAsFixed(4)}, ${_position!.longitude.toStringAsFixed(4)}'
           : _descriptionController.text.trim();
 
-      // Show progress dialog for tour creation
-      if (!mounted) return;
+      // Save the user's storage preference for next time
+      await StoragePreferences.setStorageMode(_selectedStorageMode);
 
-      int currentStep = 0;
-      int totalSteps = articles.length + 1;
+      // Route to appropriate save method based on storage mode
+      if (_selectedStorageMode == StorageMode.local) {
+        await _createTourLocally(tourName, tourDesc, articles);
+      } else {
+        await _createTourOnServer(tourName, tourDesc, articles);
+      }
+
+    } catch (e, stackTrace) {
+      print('Error in tour creation process: $e');
+      print('Stack trace: $stackTrace');
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close any open dialog
 
       showDialog(
         context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Creating Tour'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Step $currentStep of $totalSteps',
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    currentStep == 0
-                        ? 'Creating tour on server...'
-                        : currentStep <= articles.length
-                            ? 'Generating audio ${currentStep}/${articles.length}...'
-                            : 'Complete!',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-            );
-          },
+        builder: (context) => AlertDialog(
+          title: const Text('Error'),
+          content: Text('Failed to create tour: $e'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
         ),
       );
+    }
+  }
 
+  // NEW: Create tour locally on device
+  Future<void> _createTourLocally(String tourName, String tourDesc, List<WikipediaArticle> articles) async {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        title: Text('Saving Locally'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Saving tour to your device...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final localManager = LocalTourManager();
+
+      // Create tour waypoints with text for TTS
+      final waypoints = articles.map((article) {
+        return LocalTourWaypoint(
+          name: article.title,
+          latitude: article.latitude,
+          longitude: article.longitude,
+          text: article.extract, // Store text for TTS generation during playback
+        );
+      }).toList();
+
+      await localManager.saveTour(
+        name: tourName,
+        description: tourDesc,
+        waypoints: waypoints,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context); // Go back to previous screen
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('Tour "$tourName" saved locally! ✓'),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.blue,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      print('Error saving tour locally: $e');
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save tour locally: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  // EXISTING: Create tour on server (with modifications)
+  Future<void> _createTourOnServer(String tourName, String tourDesc, List<WikipediaArticle> articles) async {
+    if (!mounted) return;
+
+    int currentStep = 0;
+    int totalSteps = articles.length + 1;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Creating Tour'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Step $currentStep of $totalSteps',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  currentStep == 0
+                      ? 'Creating tour on server...'
+                      : currentStep <= articles.length
+                          ? 'Generating audio ${currentStep}/${articles.length}...'
+                          : 'Complete!',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    try {
       // Step 2: Create tour on server
       final apiService = ApiService();
       final tourResponse = await apiService.createTour(tourName, tourDesc);
@@ -864,66 +958,14 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 20),
-
-            // Language and radius info
-            Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Language',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        Text(
-                          _currentLanguage.nativeName,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Search Radius',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        Text(
-                          _searchRadiusMeters < 1000
-                              ? '${_searchRadiusMeters}m'
-                              : '${(_searchRadiusMeters / 1000).toStringAsFixed(1)}km',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
             // Location method selector
             const Text(
               'Select Location Method:',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             SegmentedButton<LocationMethod>(
               segments: const [
                 ButtonSegment(
@@ -934,7 +976,7 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
                 ButtonSegment(
                   value: LocationMethod.address,
                   label: Text('Address'),
-                  icon: Icon(Icons.search),
+                  icon: Icon(Icons.location_city),
                 ),
                 ButtonSegment(
                   value: LocationMethod.map,
@@ -946,74 +988,53 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
               onSelectionChanged: (Set<LocationMethod> newSelection) {
                 setState(() {
                   _locationMethod = newSelection.first;
-                  _position = null;
-                  _status = 'Location method changed. Please select a location.';
                 });
               },
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // Location input based on selected method
+            // Location method specific UI
             if (_locationMethod == LocationMethod.gps) ...[
-              const Text(
-                'Use your current GPS location to create the tour.',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 12),
               ElevatedButton.icon(
                 onPressed: _isLoadingLocation ? null : _getCurrentLocation,
                 icon: _isLoadingLocation
                     ? const SizedBox(
-                        width: 20,
-                        height: 20,
+                        width: 16,
+                        height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.my_location),
-                label: Text(_isLoadingLocation ? 'Getting Location...' : 'Get Current Location'),
+                label: Text(_isLoadingLocation ? 'Getting Location...' : 'Use Current Location'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
             ] else if (_locationMethod == LocationMethod.address) ...[
-              const Text(
-                'Enter an address to create the tour at that location.',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 12),
               TextField(
                 controller: _addressController,
                 decoration: const InputDecoration(
-                  labelText: 'Address',
-                  hintText: 'e.g., Times Square, New York, NY',
+                  labelText: 'Enter Address',
+                  hintText: 'e.g., 1600 Amphitheatre Parkway, Mountain View, CA',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.location_on),
+                  prefixIcon: Icon(Icons.location_city),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               ElevatedButton.icon(
                 onPressed: _isGeocodingAddress ? null : _geocodeAddress,
                 icon: _isGeocodingAddress
                     ? const SizedBox(
-                        width: 20,
-                        height: 20,
+                        width: 16,
+                        height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.search),
-                label: Text(_isGeocodingAddress ? 'Searching...' : 'Find Address'),
+                label: Text(_isGeocodingAddress ? 'Searching...' : 'Search Address'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
             ] else if (_locationMethod == LocationMethod.map) ...[
-              const Text(
-                'Tap on the map to select a location for the tour.',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 12),
               Container(
                 height: 300,
                 decoration: BoxDecoration(
@@ -1023,32 +1044,31 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: GoogleMap(
-                    initialCameraPosition: const CameraPosition(
-                      target: LatLng(40.7580, -73.9855), // Times Square as default
-                      zoom: 14,
+                    initialCameraPosition: CameraPosition(
+                      target: _position != null
+                          ? LatLng(_position!.latitude, _position!.longitude)
+                          : const LatLng(37.7749, -122.4194), // Default: San Francisco
+                      zoom: 13,
                     ),
-                    onMapCreated: (controller) {
+                    markers: _markers,
+                    onMapCreated: (GoogleMapController controller) {
                       _mapController.complete(controller);
                     },
-                    onTap: _onMapTapped,
-                    markers: _markers,
+                    onTap: _onMapTap,
                     myLocationEnabled: true,
                     myLocationButtonEnabled: true,
                   ),
                 ),
               ),
-              if (_selectedMapLocation != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Selected: ${_selectedMapLocation!.latitude.toStringAsFixed(6)}, ${_selectedMapLocation!.longitude.toStringAsFixed(6)}',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
+              const SizedBox(height: 8),
+              const Text(
+                'Tap on the map to select a location',
+                style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
             ],
 
-            const SizedBox(height: 30),
+            const SizedBox(height: 24),
 
             // Create tour button
             ElevatedButton.icon(
@@ -1092,8 +1112,9 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
                     '1. Select a location method (GPS, Address, or Map)\n'
                     '2. Choose your preferred language and search radius\n'
                     '3. The app will find Wikipedia articles near that location\n'
-                    '4. Audio will be generated using text-to-speech\n'
-                    '5. The tour will be saved and ready to play!',
+                    '4. Choose where to save: Locally or on the Server\n'
+                    '5. Audio will be generated using text-to-speech\n'
+                    '6. The tour will be saved and ready to play!',
                     style: TextStyle(fontSize: 11),
                   ),
                 ],
