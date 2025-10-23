@@ -1,4 +1,3 @@
-// File: lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,12 +10,7 @@ import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
-import 'wikipedia_playback_screen.dart';
 import 'wikipedia_location_selector.dart';
-import 'local_tour_manager.dart';
-import 'storage_preferences.dart';
-import 'storage_settings_screen.dart';
-import 'local_tour_playback_screen.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -154,8 +148,6 @@ class ApiService {
       rethrow;
     }
   }
-}
-
   Future<Tour> fetchTourDetails(int tourId) async {
     try {
       final response = await http.get(Uri.parse('$serverBaseUrl/tours/$tourId'));
