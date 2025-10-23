@@ -6,6 +6,47 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'main.dart';
 
+// Local tour waypoint model
+class LocalTourWaypoint {
+  final String name;
+  final double latitude;
+  final double longitude;
+  final String? audioPath;
+  final String? text; // For TTS-based waypoints (Wikipedia)
+
+  LocalTourWaypoint({
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+    this.audioPath,
+    this.text,
+  });
+
+  // Convert to TourPoint for internal storage
+  TourPoint toTourPoint(int id) {
+    return TourPoint(
+      id: id,
+      latitude: latitude,
+      longitude: longitude,
+      audioFilePath: audioPath ?? '',
+      localAudioPath: audioPath,
+      name: name,
+      text: text,
+    );
+  }
+
+  // Create from TourPoint
+  factory LocalTourWaypoint.fromTourPoint(TourPoint point) {
+    return LocalTourWaypoint(
+      name: point.name ?? 'Unnamed Waypoint',
+      latitude: point.latitude,
+      longitude: point.longitude,
+      audioPath: point.localAudioPath,
+      text: point.text,
+    );
+  }
+}
+
 class LocalTourManager {
   // Get the directory for storing tours locally
   Future<Directory> get _localToursDirectory async {
@@ -31,7 +72,7 @@ class LocalTourManager {
   Future<LocalTour> saveTour({
     required String name,
     required String description,
-    required List<TourPoint> waypoints,
+    required List<LocalTourWaypoint> waypoints,
   }) async {
     try {
       final toursDir = await _localToursDirectory;
@@ -39,20 +80,24 @@ class LocalTourManager {
       // Generate a unique ID based on timestamp
       final id = DateTime.now().millisecondsSinceEpoch;
 
-      // Create tour JSON
+      // Create tour JSON - convert LocalTourWaypoint to storage format
       final tourData = {
         'id': id,
         'name': name,
         'description': description,
         'created_at': DateTime.now().toIso8601String(),
-        'waypoints': waypoints.map((wp) => {
-          'id': wp.id,
-          'latitude': wp.latitude,
-          'longitude': wp.longitude,
-          'audio_filename': wp.audioFilePath,
-          'local_audio_path': wp.localAudioPath,
-          'name': wp.name,
-          'text': wp.text,
+        'waypoints': waypoints.asMap().entries.map((entry) {
+          final index = entry.key;
+          final wp = entry.value;
+          return {
+            'id': index,
+            'latitude': wp.latitude,
+            'longitude': wp.longitude,
+            'audio_filename': wp.audioPath ?? '',
+            'local_audio_path': wp.audioPath,
+            'name': wp.name,
+            'text': wp.text,
+          };
         }).toList(),
       };
 
@@ -62,11 +107,16 @@ class LocalTourManager {
 
       print('✅ Tour saved locally: $name (ID: $id)');
 
+      // Convert LocalTourWaypoint to TourPoint for LocalTour
+      final tourPoints = waypoints.asMap().entries.map((entry) {
+        return entry.value.toTourPoint(entry.key);
+      }).toList();
+
       return LocalTour(
         id: id,
         name: name,
         description: description,
-        waypoints: waypoints,
+        waypoints: tourPoints,
         createdAt: DateTime.now(),
       );
     } catch (e) {
