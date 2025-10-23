@@ -465,7 +465,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     await localManager.saveTour(
       name: name,
       description: description,
-      waypoints: waypoints,
+      waypoints: waypoints.map((point) => LocalTourWaypoint.fromTourPoint(point)).toList(),
     );
 
     if (!mounted) return;
