@@ -325,6 +325,9 @@ class TourApp extends StatelessWidget {
 
 // --- Main Screens ---
 
+
+// ChoiceScreen class - Wikipedia Tour button has been removed
+
 class ChoiceScreen extends StatelessWidget {
   const ChoiceScreen({super.key});
 
@@ -379,37 +382,7 @@ class ChoiceScreen extends StatelessWidget {
                 },
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.public, size: 28),
-                label: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Wikipedia Tour', style: TextStyle(fontSize: 18)),
-                    SizedBox(height: 4),
-                    Text(
-                      'Find Wikipedia articles at any location',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-                    ),
-                  ],
-                ),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.all(20),
-                  backgroundColor: Colors.orange,
-                  foregroundColor: Colors.white,
-                  alignment: Alignment.centerLeft,
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const WikipediaPlaybackScreen(),
-                    ),
-                  );
-                },
-              ),
-            ),
+            // WIKIPEDIA TOUR BUTTON REMOVED HERE - It was redundant
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: ElevatedButton.icon(
