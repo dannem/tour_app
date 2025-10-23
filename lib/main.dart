@@ -13,6 +13,10 @@ import 'dart:async';
 import 'dart:io';
 import 'wikipedia_playback_screen.dart';
 import 'wikipedia_location_selector.dart';
+import 'local_tour_manager.dart';
+import 'storage_preferences.dart';
+import 'storage_settings_screen.dart';
+import 'local_tour_playback_screen.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -116,6 +120,41 @@ class ApiService {
       throw Exception('Could not connect to server or parse tours. Error: $e');
     }
   }
+
+  Future<void> createTextWaypoint({
+    required int tourId,
+    required String name,
+    required double latitude,
+    required double longitude,
+    required String text,
+  }) async {
+    try {
+      final url = serverBaseUrl.endsWith('/')
+          ? '${serverBaseUrl}tours/$tourId/waypoints/text'
+          : '$serverBaseUrl/tours/$tourId/waypoints/text';
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: <String, String>{
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          'name': name,
+          'latitude': latitude.toString(),
+          'longitude': longitude.toString(),
+          'text': text,
+        },
+      );
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('Failed to create text waypoint. Status: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Error creating text waypoint: $e');
+      rethrow;
+    }
+  }
+}
 
   Future<Tour> fetchTourDetails(int tourId) async {
     try {

@@ -7,6 +7,8 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'wikipedia_service.dart';
 import 'main.dart'; // For ApiService and Tour
+import 'local_tour_manager.dart';
+import 'storage_preferences.dart';
 
 class WikipediaPlaybackScreen extends StatefulWidget {
   final Position? initialPosition; // null means use current GPS, otherwise use this position
@@ -395,319 +397,440 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
     }
   }
 
-  Future<void> _saveAsCustomTour() async {
-    if (_nearbyArticles.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Search for nearby places first.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
+  Future<void> _saveWikipediaTourLocally({
+  required String name,
+  required String description,
+  required List<WikipediaArticle> articles,
+}) async {
+  if (!mounted) return;
 
-    // Filter out disabled articles
-    final articlesToSave = _nearbyArticles
-        .where((article) => !_disabledArticleIds.contains(article.pageId))
-        .toList();
-
-    if (articlesToSave.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('All articles are disabled. Enable some articles first.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    // Show dialog to get tour name and description
-    final nameController = TextEditingController(
-      text: 'Wikipedia Tour - ${_currentLanguage.nativeName}',
-    );
-
-    // Create description based on whether we're using a custom location or current location
-    String locationDescription;
-    if (widget.initialPosition != null) {
-      locationDescription = 'Wikipedia articles in ${_currentLanguage.nativeName} near ${_searchCenter?.latitude.toStringAsFixed(4)}, ${_searchCenter?.longitude.toStringAsFixed(4)}';
-    } else {
-      locationDescription = 'Wikipedia articles in ${_currentLanguage.nativeName} near my current location';
-    }
-
-    final descController = TextEditingController(text: locationDescription);
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Save Wikipedia Tour'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'This will save ${articlesToSave.length} article${articlesToSave.length != 1 ? 's' : ''} as a custom tour.',
-                style: const TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Tour Name',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: descController,
-                decoration: const InputDecoration(
-                  labelText: 'Description',
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 16, color: Colors.blue),
-                        SizedBox(width: 4),
-                        Text(
-                          'How it works:',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      '• Text-to-speech will be used for audio\n' // Corrected newline escape sequence
-                      '• Articles are saved in order of distance\n' // Corrected newline escape sequence
-                      '• You can play this tour later from the main menu',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              nameController.dispose();
-              descController.dispose();
-              Navigator.pop(context, false);
-            },
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context, true);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Save Tour'),
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Saving Locally'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            'Saving ${articles.length} articles to device...',
+            style: const TextStyle(fontSize: 14),
           ),
         ],
       ),
+    ),
+  );
+
+  try {
+    final localManager = LocalTourManager();
+
+    // Sort articles by distance
+    if (_searchCenter != null) {
+      articles.sort((a, b) {
+        final distA = Geolocator.distanceBetween(
+          _searchCenter!.latitude,
+          _searchCenter!.longitude,
+          a.latitude,
+          a.longitude,
+        );
+        final distB = Geolocator.distanceBetween(
+          _searchCenter!.latitude,
+          _searchCenter!.longitude,
+          b.latitude,
+          b.longitude,
+        );
+        return distA.compareTo(distB);
+      });
+    }
+
+    // Create tour points with text for TTS
+    final waypoints = <TourPoint>[];
+    for (int i = 0; i < articles.length; i++) {
+      final article = articles[i];
+      waypoints.add(
+        TourPoint(
+          id: i,
+          latitude: article.latitude,
+          longitude: article.longitude,
+          audioFilePath: '',
+          name: article.title,
+          text: article.extract,
+        ),
+      );
+    }
+
+    // Save locally
+    await localManager.saveTour(
+      name: name,
+      description: description,
+      waypoints: waypoints,
     );
 
-    if (confirmed != true) {
-      nameController.dispose();
-      descController.dispose();
-      return;
-    }
-
-    final tourName = nameController.text;
-    final tourDesc = descController.text;
-    nameController.dispose();
-    descController.dispose();
-
-    // Show loading dialog with progress
     if (!mounted) return;
+    Navigator.pop(context); // Close loading dialog
 
-    int currentStep = 0;
-    int totalSteps = articlesToSave.length + 1; // +1 for creating tour
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Wikipedia tour "$name" saved locally! ✓'),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ),
+    );
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Saving Wikipedia Tour'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(
-                'Step $currentStep of $totalSteps',
-                style: const TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                currentStep == 0
-                    ? 'Creating tour on server...'
-                    : currentStep <= articlesToSave.length
-                        ? 'Generating audio ${currentStep}/${articlesToSave.length}...'
-                        : 'Complete!',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
+    Navigator.of(context).pop();
+    Navigator.of(context).pop();
+
+  } catch (e) {
+    print('Error saving locally: $e');
+
+    if (!mounted) return;
+    Navigator.pop(context);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Failed to save: ${e.toString()}'),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+}
+
+  Future<void> _saveWikipediaTourToServer({
+  required String name,
+  required String description,
+  required List<WikipediaArticle> articles,
+}) async {
+  int currentStep = 0;
+  int totalSteps = articles.length + 1;
+
+  if (!mounted) return;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Uploading to Server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              'Step $currentStep of $totalSteps',
+              style: const TextStyle(fontSize: 14),
+            ),
+          ],
         ),
       ),
-    ).then((_) {
-      // Dialog dismissed callback
-    });
+    ),
+  );
 
-    try {
-      // Sort articles by distance from search center
-      if (_searchCenter != null) {
-        articlesToSave.sort((a, b) {
-          final distA = Geolocator.distanceBetween(
-            _searchCenter!.latitude,
-            _searchCenter!.longitude,
-            a.latitude,
-            a.longitude,
-          );
-          final distB = Geolocator.distanceBetween(
-            _searchCenter!.latitude,
-            _searchCenter!.longitude,
-            b.latitude,
-            b.longitude,
-          );
-          return distA.compareTo(distB);
-        });
-      }
+  try {
+    // Sort articles
+    if (_searchCenter != null) {
+      articles.sort((a, b) {
+        final distA = Geolocator.distanceBetween(
+          _searchCenter!.latitude,
+          _searchCenter!.longitude,
+          a.latitude,
+          a.longitude,
+        );
+        final distB = Geolocator.distanceBetween(
+          _searchCenter!.latitude,
+          _searchCenter!.longitude,
+          b.latitude,
+          b.longitude,
+        );
+        return distA.compareTo(distB);
+      });
+    }
 
-      print('Creating tour: $tourName');
+    // Create tour on server
+    final apiService = ApiService();
+    Tour? newTour;
 
-      // Create the tour - with retry logic for server wake-up
-      final apiService = ApiService();
-      Tour? newTour;
-      int retries = 3;
+    int retries = 0;
+    const maxRetries = 3;
 
-      while (retries > 0 && newTour == null) {
-        try {
-          newTour = await apiService.createTour(tourName, tourDesc)
-              .timeout(const Duration(seconds: 60));
-          currentStep = 1;
-          break;
-        } catch (e) {
-          print('Attempt ${4 - retries} failed: $e');
-          retries--;
-          if (retries > 0) {
-            print('Retrying... ($retries attempts left)');
-            await Future.delayed(const Duration(seconds: 3));
-          } else {
-            rethrow;
-          }
+    while (retries < maxRetries) {
+      try {
+        newTour = await apiService.createTour(name, description);
+        currentStep = 1;
+        break;
+      } catch (e) {
+        retries++;
+        if (retries >= maxRetries) {
+          throw Exception('Failed after $maxRetries attempts: $e');
         }
+        await Future.delayed(Duration(seconds: retries * 2));
       }
+    }
 
-      if (newTour == null) {
-        throw Exception('Failed to create tour after multiple attempts');
-      }
+    if (newTour == null) {
+      throw Exception('Failed to create tour');
+    }
 
-      print('Tour created with ID: ${newTour.id}');
+    // Upload articles
+    for (int i = 0; i < articles.length; i++) {
+      final article = articles[i];
+      currentStep = i + 2;
 
-      // For each article, create a waypoint with TTS audio
-      for (int i = 0; i < articlesToSave.length; i++) {
-        final article = articlesToSave[i];
-        print('Processing article ${i + 1}/${articlesToSave.length}: ${article.title}');
-
-        // Update progress
-        currentStep = i + 2;
-
-        try {
-          // Generate TTS audio file
-          final audioPath = await _generateTtsAudio(article, i);
-
-          if (audioPath != null) {
-            print('Audio generated: $audioPath');
-
-            // Verify file exists
-            final file = File(audioPath);
-            if (!await file.exists()) {
-              print('Warning: Audio file not found at $audioPath');
-              continue;
-            }
-
-            await apiService.createWaypoint(
-              tourId: newTour.id,
-              name: article.title,
-              latitude: article.latitude,
-              longitude: article.longitude,
-              audioFilePath: audioPath,
-            );
-
-            print('Waypoint created successfully');
-          } else {
-            print('Warning: Could not generate audio for ${article.title}');
-          }
-        } catch (e) {
-          print('Error creating waypoint for ${article.title}: $e');
-          // Continue with next article instead of failing completely
-        }
-      }
-
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Tour "$tourName" saved with ${articlesToSave.length} waypoints!'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 3),
-          action: SnackBarAction(
-            label: 'View Tours',
-            textColor: Colors.white,
-            onPressed: () {
-              Navigator.pop(context); // Go back to main menu
-            },
-          ),
-        ),
-      );
-    } catch (e, stackTrace) {
-      print('Error saving tour: $e');
-      print('Stack trace: $stackTrace');
-
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-
-      String errorMessage = 'Failed to save tour: $e';
-      if (e.toString().contains('Connection closed') ||
-          e.toString().contains('TimeoutException')) {
-        errorMessage = 'Server connection timeout. The server may be starting up. Please try again in a minute.';
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMessage),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'Retry',
-            textColor: Colors.white,
-            onPressed: () {
-              _saveAsCustomTour();
-            },
-          ),
-        ),
+      await apiService.createTextWaypoint(
+        tourId: newTour.id,
+        name: article.title,
+        latitude: article.latitude,
+        longitude: article.longitude,
+        text: article.extract,
       );
     }
+
+    if (!mounted) return;
+    Navigator.pop(context);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Tour "$name" uploaded! ✓'),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+
+    Navigator.of(context).pop();
+    Navigator.of(context).pop();
+
+  } catch (e) {
+    print('Error uploading: $e');
+
+    if (!mounted) return;
+    Navigator.pop(context);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Failed to upload: ${e.toString()}'),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+      ),
+    );
   }
+}
+
+  Future<void> _saveAsCustomTour() async {
+  if (_nearbyArticles.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Search for nearby places first.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+    return;
+  }
+
+  // Filter out disabled articles
+  final articlesToSave = _nearbyArticles
+      .where((article) => !_disabledArticleIds.contains(article.pageId))
+      .toList();
+
+  if (articlesToSave.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('All articles are disabled. Enable some articles first.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+    return;
+  }
+
+  // Check storage preference FIRST
+  final storageMode = await StoragePreferences.getStorageMode();
+  final isLocalStorage = storageMode == StorageMode.local;
+
+  // Show dialog to get tour name and description
+  final nameController = TextEditingController(
+    text: 'Wikipedia Tour - ${_currentLanguage.nativeName}',
+  );
+
+  // Create description based on whether we're using a custom location or current location
+  String locationDescription;
+  if (widget.initialPosition != null) {
+    locationDescription = 'Wikipedia articles in ${_currentLanguage.nativeName} near ${_searchCenter?.latitude.toStringAsFixed(4)}, ${_searchCenter?.longitude.toStringAsFixed(4)}';
+  } else {
+    locationDescription = 'Wikipedia articles in ${_currentLanguage.nativeName} near my current location';
+  }
+
+  final descController = TextEditingController(text: locationDescription);
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Save Wikipedia Tour'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will save ${articlesToSave.length} article${articlesToSave.length != 1 ? 's' : ''} as a custom tour.',
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Tour Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descController,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isLocalStorage ? Colors.blue.shade50 : Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        isLocalStorage ? Icons.phone_android : Icons.cloud_upload,
+                        size: 16,
+                        color: isLocalStorage ? Colors.blue : Colors.orange,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        isLocalStorage ? 'Saving Locally' : 'Uploading to Server',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: isLocalStorage ? Colors.blue : Colors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    isLocalStorage
+                        ? '• Tour will be saved on this device\n'
+                          '• Text-to-speech will be used for audio\n'
+                          '• No internet required to play\n'
+                          '• Tour will be private to you'
+                        : '• Tour will be uploaded to the cloud\n'
+                          '• Text-to-speech will be used for audio\n'
+                          '• Can be accessed from any device\n'
+                          '• Can be shared with others',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            nameController.dispose();
+            descController.dispose();
+            Navigator.pop(context, false);
+          },
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context, true);
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isLocalStorage ? Colors.blue : Colors.green,
+            foregroundColor: Colors.white,
+          ),
+          child: Text(isLocalStorage ? 'Save Locally' : 'Upload to Server'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) {
+    nameController.dispose();
+    descController.dispose();
+    return;
+  }
+
+  final tourName = nameController.text.trim();
+  final tourDesc = descController.text.trim();
+  nameController.dispose();
+  descController.dispose();
+
+  if (tourName.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Please enter a tour name.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+    return;
+  }
+
+  // Route to appropriate save method based on storage mode
+  if (isLocalStorage) {
+    await _saveWikipediaTourLocally(
+      name: tourName,
+      description: tourDesc,
+      articles: articlesToSave,
+    );
+  } else {
+    await _saveWikipediaTourToServer(
+      name: tourName,
+      description: tourDesc,
+      articles: articlesToSave,
+    );
+  }
+}
 
   Future<String?> _generateTtsAudio(WikipediaArticle article, int index) async {
     try {
