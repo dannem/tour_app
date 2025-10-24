@@ -13,6 +13,7 @@ import 'dart:io';
 import 'wikipedia_location_selector.dart';
 import 'storage_preferences.dart';
 import 'local_tour_manager.dart';
+import 'storage_settings_screen.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -369,6 +370,20 @@ class ChoiceScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tour App'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const StorageSettingsScreen(),
+                ),
+              );
+            },
+            tooltip: 'Storage Settings',
+          ),
+        ],
       ),
       body: Center(
         child: Column(
