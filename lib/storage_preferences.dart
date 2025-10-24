@@ -18,14 +18,14 @@ class StoragePreferences {
       final modeString = prefs.getString(_storageKey);
 
       if (modeString == null) {
-        // Default to server mode for backward compatibility
-        return StorageMode.server;
+        // Default to local mode
+        return StorageMode.local;
       }
 
       return modeString == 'local' ? StorageMode.local : StorageMode.server;
     } catch (e) {
       print('Error getting storage mode: $e');
-      return StorageMode.server; // Default fallback
+      return StorageMode.local; // Default fallback
     }
   }
 
