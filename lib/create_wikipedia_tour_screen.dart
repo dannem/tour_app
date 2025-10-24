@@ -35,7 +35,7 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
   bool _isLoadingLocation = false;
   int _searchRadiusMeters = 1000;
   WikipediaLanguage _currentLanguage = WikipediaLanguage.languages[0];
-  StorageMode _selectedStorageMode = StorageMode.server; // NEW: Track selected storage mode
+  StorageMode _selectedStorageMode = StorageMode.local; // Track selected storage mode (default: local)
 
   final Completer<GoogleMapController> _mapController = Completer();
   LatLng? _selectedMapLocation;

@@ -562,7 +562,7 @@ class _AddWaypointsScreenState extends State<AddWaypointsScreen> {
   final List<TourPoint> _newWaypoints = [];
   bool _isUploading = false;
   String _uploadStatus = '';
-  StorageMode _selectedStorageMode = StorageMode.server; // Storage selection
+  StorageMode _selectedStorageMode = StorageMode.local; // Storage selection (default: local)
   @override
   void initState() {
     super.initState();
