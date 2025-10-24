@@ -468,8 +468,10 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       waypoints: waypoints.map((point) => LocalTourWaypoint.fromTourPoint(point)).toList(),
     );
 
+    // Always close the loading dialog first, even if widget is unmounted
+    Navigator.of(context, rootNavigator: true).pop();
+
     if (!mounted) return;
-    Navigator.pop(context); // Close loading dialog
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -493,8 +495,10 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
   } catch (e) {
     print('Error saving locally: $e');
 
+    // Always close the loading dialog first, even if widget is unmounted
+    Navigator.of(context, rootNavigator: true).pop();
+
     if (!mounted) return;
-    Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

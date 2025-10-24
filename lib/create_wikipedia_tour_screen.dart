@@ -616,8 +616,10 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
         waypoints: waypoints,
       );
 
+      // Always close the loading dialog first, even if widget is unmounted
+      Navigator.of(context, rootNavigator: true).pop();
+
       if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
       Navigator.pop(context); // Go back to previous screen
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -638,8 +640,10 @@ class _CreateWikipediaTourScreenState extends State<CreateWikipediaTourScreen> {
     } catch (e) {
       print('Error saving tour locally: $e');
 
+      // Always close the loading dialog first, even if widget is unmounted
+      Navigator.of(context, rootNavigator: true).pop();
+
       if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
