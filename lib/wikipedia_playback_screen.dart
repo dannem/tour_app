@@ -489,7 +489,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       ),
     );
 
-    Navigator.of(context).pop();
+    // Navigate back to main screen (single pop because WikipediaLocationSelector uses pushReplacement)
     Navigator.of(context).pop();
 
   } catch (e) {
@@ -627,7 +627,7 @@ class _WikipediaPlaybackScreenState extends State<WikipediaPlaybackScreen> {
       ),
     );
 
-    Navigator.of(context).pop();
+    // Navigate back to main screen (single pop because WikipediaLocationSelector uses pushReplacement)
     Navigator.of(context).pop();
 
   } catch (e) {
