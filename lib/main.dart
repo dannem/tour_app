@@ -14,6 +14,7 @@ import 'wikipedia_location_selector.dart';
 import 'storage_preferences.dart';
 import 'local_tour_manager.dart';
 import 'storage_settings_screen.dart';
+import 'local_tour_playback_screen.dart';
 
 // --- Server URL ---
 const String serverBaseUrl = "https://tour-app-server.onrender.com";
@@ -1831,18 +1832,47 @@ class TourListScreen extends StatefulWidget {
   State<TourListScreen> createState() => _TourListScreenState();
 }
 
+enum TourStorageMode { local, remote }
+
 class _TourListScreenState extends State<TourListScreen> {
   late Future<List<Tour>> futureTours;
+  TourStorageMode _storageMode = TourStorageMode.remote;
+  final Set<int> _localTourIds = {};
 
   @override
   void initState() {
     super.initState();
-    futureTours = ApiService().fetchTours();
+    futureTours = _loadTours();
+  }
+
+  Future<List<Tour>> _loadTours() async {
+    _localTourIds.clear();
+
+    if (_storageMode == TourStorageMode.local) {
+      // Load local tours
+      final localTours = await LocalTourManager().loadAllTours();
+      // Track which tours are local
+      for (var tour in localTours) {
+        _localTourIds.add(tour.id);
+      }
+      // Convert to Tour objects for unified display
+      return localTours.map((lt) => lt.toTour()).toList();
+    } else {
+      // Load remote tours
+      return ApiService().fetchTours();
+    }
   }
 
   void _refreshTours() {
     setState(() {
-      futureTours = ApiService().fetchTours();
+      futureTours = _loadTours();
+    });
+  }
+
+  void _switchStorageMode(TourStorageMode mode) {
+    setState(() {
+      _storageMode = mode;
+      futureTours = _loadTours();
     });
   }
 
@@ -1882,7 +1912,13 @@ class _TourListScreenState extends State<TourListScreen> {
     );
 
     try {
-      await ApiService().deleteTour(tour.id);
+      // Check if this is a local tour
+      if (_localTourIds.contains(tour.id)) {
+        await LocalTourManager().deleteTour(tour.id);
+      } else {
+        await ApiService().deleteTour(tour.id);
+      }
+
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1919,148 +1955,202 @@ class _TourListScreenState extends State<TourListScreen> {
           ),
         ],
       ),
-      body: FutureBuilder<List<Tour>>(
-        future: futureTours,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError) {
-            return Center(child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
-                    onPressed: _refreshTours,
-                  ),
-                ],
-              ),
-            ));
-          } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.tour, size: 64, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  const Text('No tours found on the server.', style: TextStyle(fontSize: 16)),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh'),
-                    onPressed: _refreshTours,
-                  ),
-                ],
-              ),
-            );
-          } else {
-            List<Tour> tours = snapshot.data!;
-            return ListView.builder(
-              itemCount: tours.length,
-              itemBuilder: (context, index) {
-                final tour = tours[index];
-                return Dismissible(
-                  key: Key(tour.id.toString()),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    color: Colors.red,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20.0),
-                    child: const Icon(Icons.delete, color: Colors.white, size: 32),
-                  ),
-                  confirmDismiss: (direction) async {
-                    return await showDialog<bool>(
-                      context: context,
-                      builder: (BuildContext context) {
-                        return AlertDialog(
-                          title: const Text('Delete Tour'),
-                          content: Text('Are you sure you want to delete "${tour.title}"?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(context).pop(false),
-                              child: const Text('Cancel'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () => Navigator.of(context).pop(true),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
-                                foregroundColor: Colors.white,
-                              ),
-                              child: const Text('Delete'),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                  },
-                  onDismissed: (direction) async {
-                    try {
-                      await ApiService().deleteTour(tour.id);
-                      if (!mounted) return;
-
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Tour "${tour.title}" deleted'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-
-                      _refreshTours();
-                    } catch (e) {
-                      if (!mounted) return;
-
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Failed to delete: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-
-                      _refreshTours();
-                    }
-                  },
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.blue,
-                      child: Text('${tour.points.length}', style: const TextStyle(color: Colors.white)),
-                    ),
-                    title: Text(tour.title),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+      body: Column(
+        children: [
+          // Storage mode selector
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: SegmentedButton<TourStorageMode>(
+              segments: const [
+                ButtonSegment<TourStorageMode>(
+                  value: TourStorageMode.local,
+                  label: Text('Local Storage'),
+                  icon: Icon(Icons.phone_android),
+                ),
+                ButtonSegment<TourStorageMode>(
+                  value: TourStorageMode.remote,
+                  label: Text('Remote Storage'),
+                  icon: Icon(Icons.cloud),
+                ),
+              ],
+              selected: {_storageMode},
+              onSelectionChanged: (Set<TourStorageMode> newSelection) {
+                _switchStorageMode(newSelection.first);
+              },
+            ),
+          ),
+          // Tour list
+          Expanded(
+            child: FutureBuilder<List<Tour>>(
+              future: futureTours,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                } else if (snapshot.hasError) {
+                  return Center(child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text(tour.description),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${tour.points.length} waypoint${tour.points.length != 1 ? 's' : ''}',
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                        const SizedBox(height: 16),
+                        Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                          onPressed: _refreshTours,
                         ),
                       ],
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                      onPressed: () => _deleteTour(tour),
-                      tooltip: 'Delete Tour',
+                  ));
+                } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.tour, size: 64, color: Colors.grey),
+                        const SizedBox(height: 16),
+                        Text(
+                          _storageMode == TourStorageMode.local
+                              ? 'No local tours found.'
+                              : 'No tours found on the server.',
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton.icon(
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Refresh'),
+                          onPressed: _refreshTours,
+                        ),
+                      ],
                     ),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => TourPlaybackScreen(tourId: tour.id),
+                  );
+                } else {
+                  List<Tour> tours = snapshot.data!;
+                  return ListView.builder(
+                    itemCount: tours.length,
+                    itemBuilder: (context, index) {
+                      final tour = tours[index];
+                      return Dismissible(
+                        key: Key(tour.id.toString()),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          color: Colors.red,
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20.0),
+                          child: const Icon(Icons.delete, color: Colors.white, size: 32),
+                        ),
+                        confirmDismiss: (direction) async {
+                          return await showDialog<bool>(
+                            context: context,
+                            builder: (BuildContext context) {
+                              return AlertDialog(
+                                title: const Text('Delete Tour'),
+                                content: Text('Are you sure you want to delete "${tour.title}"?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () => Navigator.of(context).pop(true),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    child: const Text('Delete'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                        onDismissed: (direction) async {
+                          try {
+                            // Check if this is a local tour
+                            if (_localTourIds.contains(tour.id)) {
+                              await LocalTourManager().deleteTour(tour.id);
+                            } else {
+                              await ApiService().deleteTour(tour.id);
+                            }
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Tour "${tour.title}" deleted'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+
+                            _refreshTours();
+                          } catch (e) {
+                            if (!mounted) return;
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to delete: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+
+                            _refreshTours();
+                          }
+                        },
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.blue,
+                            child: Text('${tour.points.length}', style: const TextStyle(color: Colors.white)),
+                          ),
+                          title: Text(tour.title),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(tour.description),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${tour.points.length} waypoint${tour.points.length != 1 ? 's' : ''}',
+                                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                              ),
+                            ],
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => _deleteTour(tour),
+                            tooltip: 'Delete Tour',
+                          ),
+                          onTap: () async {
+                            // Navigate to appropriate playback screen based on storage type
+                            if (_localTourIds.contains(tour.id)) {
+                              // Local tour - load and navigate to LocalTourPlaybackScreen
+                              final localTour = await LocalTourManager().getTour(tour.id);
+                              if (localTour != null && mounted) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => LocalTourPlaybackScreen(tour: localTour),
+                                  ),
+                                );
+                              }
+                            } else {
+                              // Remote tour - navigate to TourPlaybackScreen
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => TourPlaybackScreen(tourId: tour.id),
+                                ),
+                              );
+                            }
+                          },
                         ),
                       );
                     },
-                  ),
-                );
+                  );
+                }
               },
-            );
-          }
-        },
+            ),
+          ),
+        ],
       ),
     );
   }
